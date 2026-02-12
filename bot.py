@@ -60,7 +60,7 @@ THEHARVESTER_CMD = 'theHarvester' if IS_WINDOWS else '/usr/bin/theHarvester'
 SUBLIST3R_CMD = 'sublist3r' if IS_WINDOWS else '/usr/bin/sublist3r'
 
 # Source-specific finding parsers
-SOURCES_WITH_EMAIL_DETAILS = {'Breaches'}
+SOURCES_WITH_EMAIL_DETAILS = {'COMB'}
 
 # Configure requests session
 session = requests.Session()
@@ -258,9 +258,11 @@ def extract_findings(output, query, search_type):
 
 
 async def send_consolidated_results(interaction, query, aggregated):
+    query_header = f"## Search Term\n`{escape_for_discord(query)}`"
+
     if not aggregated:
         await interaction.edit_original_response(
-            content=f'✅ No consolidated findings for `{query}` across selected sources.'
+            content=f"{query_header}\n\n✅ No consolidated findings across selected sources."
         )
         return
 
@@ -275,7 +277,7 @@ async def send_consolidated_results(interaction, query, aggregated):
         for tool in item['tools']:
             by_source.setdefault(tool, []).append(item)
 
-    lines = []
+    lines = [query_header]
 
     if multi_source:
         lines.append('## Found on Multiple Sources')
@@ -296,7 +298,7 @@ async def send_consolidated_results(interaction, query, aggregated):
                 lines.append(base)
 
     for tool in sorted(by_source):
-        lines.append(f'## Source: {escape_for_discord(tool)}')
+        lines.append(f'## {escape_for_discord(tool)}')
         unique_items = {item['text'].lower(): item for item in by_source[tool]}
         for key in sorted(unique_items, key=str.lower):
             lines.append(render_finding_for_tool(unique_items[key], tool))
@@ -316,7 +318,7 @@ async def send_consolidated_results(interaction, query, aggregated):
         chunks.append(chunk)
 
     if not chunks:
-        chunks = [f'✅ No consolidated findings for `{query}` across selected sources.']
+        chunks = [f"{query_header}\n\n✅ No consolidated findings across selected sources."]
 
     await interaction.edit_original_response(content=chunks[0])
 
@@ -498,8 +500,8 @@ async def help_command(interaction: discord.Interaction):
         '**Main command:** `/osint`\n'
         '**Search type options:** Username, Email, Phone, Domain\n\n'
         '**Sources:**\n'
-        '- **Username**: Sherlock, Blackbird, cupidcr4wl, proxynova, InfoStealer, user-scanner\n'
-        '- **Email**: Blackbird, Holehe, proxynova, InfoStealer, user-scanner\n'
+        '- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, InfoStealer, user-scanner\n'
+        '- **Email**: Blackbird, Holehe, COMB, InfoStealer, user-scanner\n'
         '- **Phone**: cupidcr4wl\n'
         '- **Domain**: whois, theHarvester, Sublist3r\n\n'
         'Results are consolidated so identical findings from multiple tools are grouped with source attribution.'
@@ -538,7 +540,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
             ('Sherlock', run_sherlock),
             ('Blackbird', run_blackbird_username),
             ('cupidcr4wl', run_cupid_username),
-            ('Breaches', run_breaches),
+            ('COMB', run_breaches),
             ('InfoStealer', run_infostealer_username),
             ('user-scanner', run_user_scanner_username),
         ]
@@ -546,7 +548,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
         tools = [
             ('Blackbird', run_blackbird_email),
             ('Holehe', run_holehe),
-            ('Breaches', run_breaches),
+            ('COMB', run_breaches),
             ('InfoStealer', run_infostealer_email),
             ('user-scanner', run_user_scanner_email),
         ]
