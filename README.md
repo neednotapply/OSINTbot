@@ -67,6 +67,20 @@ cd /d C:\path\to\OSINTbot
 discordbotvenv\Scripts\python osint_bot.py
 ```
 
+
+## Logging
+
+The bot now writes detailed execution logs to both stdout and `osintbot.log` (rotated at ~2MB with 3 backups).
+
+- Set `OSINTBOT_LOG_LEVEL` to control verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`).
+- Default level is `INFO`.
+- Use `DEBUG` when diagnosing silent failures, parser misses, or tool subprocess issues.
+
+Example:
+```bash
+OSINTBOT_LOG_LEVEL=DEBUG python bot.py
+```
+
 ## Updating
 
 #### Linux

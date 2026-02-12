@@ -1,16 +1,53 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
+from logging.handlers import RotatingFileHandler
 
 import discord
 import requests
 from discord import app_commands
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'osintbot.log')
+
+
+def configure_logging():
+    logger = logging.getLogger('osintbot')
+    if logger.handlers:
+        return logger
+
+    log_level_name = os.getenv('OSINTBOT_LOG_LEVEL', 'INFO').upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s [%(name)s] %(message)s')
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+
+    file_handler = RotatingFileHandler(LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding='utf-8')
+    file_handler.setFormatter(formatter)
+
+    logger.setLevel(log_level)
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+    logger.propagate = False
+    return logger
+
+
+logger = configure_logging()
+
+
+def shorten(text, limit=500):
+    if text is None:
+        return ''
+    cleaned = str(text).replace('\n', '\\n')
+    if len(cleaned) <= limit:
+        return cleaned
+    return f'{cleaned[:limit]}... [truncated {len(cleaned) - limit} chars]'
 
 
 def load_config(config_path):
@@ -111,6 +148,13 @@ def validate_domain(domain):
 
 async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
     loop = asyncio.get_event_loop()
+    logger.info(
+        'Running subprocess command=%s timeout=%ss cwd=%s combine_streams=%s',
+        command,
+        timeout,
+        cwd,
+        combine_streams
+    )
 
     def _run():
         result = subprocess.run(
@@ -122,27 +166,46 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
             shell=False
         )
         if combine_streams:
-            return (result.stdout or '') + (result.stderr or '')
-        return result.stdout if result.stdout else result.stderr
+            output = (result.stdout or '') + (result.stderr or '')
+        else:
+            output = result.stdout if result.stdout else result.stderr
+
+        logger.info(
+            'Finished subprocess command=%s returncode=%s output=%s',
+            command,
+            result.returncode,
+            shorten(output)
+        )
+        return output
 
     return await loop.run_in_executor(None, _run)
 
 
 async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_streams=False):
     loop = asyncio.get_event_loop()
+    logger.info(
+        'Running fallback subprocess commands=%s timeout=%ss cwd=%s combine_streams=%s',
+        commands,
+        timeout,
+        cwd,
+        combine_streams
+    )
 
     def _run():
         missing = []
         for command in commands:
             executable = command[0]
             if os.path.isabs(executable) and not os.path.exists(executable):
+                logger.warning('Skipping missing absolute executable: %s', executable)
                 missing.append(executable)
                 continue
             if not os.path.isabs(executable) and shutil.which(executable) is None and executable != sys.executable:
+                logger.warning('Skipping missing PATH executable: %s', executable)
                 missing.append(executable)
                 continue
 
             try:
+                logger.info('Attempting fallback command: %s', command)
                 result = subprocess.run(
                     command,
                     capture_output=True,
@@ -152,12 +215,22 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
                     shell=False
                 )
             except FileNotFoundError:
+                logger.warning('FileNotFoundError while running executable: %s', executable)
                 missing.append(executable)
                 continue
 
             if combine_streams:
-                return (result.stdout or '') + (result.stderr or '')
-            return result.stdout if result.stdout else result.stderr
+                output = (result.stdout or '') + (result.stderr or '')
+            else:
+                output = result.stdout if result.stdout else result.stderr
+
+            logger.info(
+                'Fallback command succeeded command=%s returncode=%s output=%s',
+                command,
+                result.returncode,
+                shorten(output)
+            )
+            return output
 
         checked = ', '.join(sorted(set(missing))) if missing else 'tool executable'
         return (
@@ -310,6 +383,13 @@ def extract_findings(output, query, search_type, tool_name=None):
         if has_url or looks_record or is_structured_record:
             findings.append(line)
 
+    logger.info(
+        'Parsed findings tool=%s search_type=%s query=%s findings=%s',
+        tool_name,
+        search_type,
+        query,
+        len(findings)
+    )
     return findings
 
 
@@ -317,6 +397,7 @@ async def send_consolidated_results(interaction, query, aggregated):
     query_header = f"\n`{escape_for_discord(query)}`"
 
     if not aggregated:
+        logger.info('No consolidated findings query=%s user_id=%s', query, interaction.user.id)
         await interaction.edit_original_response(
             content=f"{query_header}\n\n✅ No consolidated findings across selected sources."
         )
@@ -377,6 +458,13 @@ async def send_consolidated_results(interaction, query, aggregated):
         chunks = [f"{query_header}\n\n✅ No consolidated findings across selected sources."]
 
     await interaction.edit_original_response(content=chunks[0])
+    logger.info(
+        'Sending consolidated results query=%s user_id=%s findings=%s chunks=%s',
+        query,
+        interaction.user.id,
+        len(aggregated),
+        len(chunks)
+    )
 
     for extra_chunk in chunks[1:]:
         await interaction.followup.send(extra_chunk)
@@ -408,6 +496,7 @@ async def run_breaches(query):
         return session.get('https://api.proxynova.com/comb', params={'query': query, 'start': 0, 'limit': 100}, timeout=20)
 
     response = await loop.run_in_executor(None, _request)
+    logger.info('COMB response status=%s query=%s', response.status_code, query)
     if response.status_code != 200:
         return f"API returned status code: {response.status_code}"
 
@@ -432,6 +521,7 @@ async def run_infostealer_username(username):
         )
 
     response = await loop.run_in_executor(None, _request)
+    logger.info('InfoStealer username response status=%s query=%s', response.status_code, username)
     if response.status_code != 200:
         return f"API returned status code: {response.status_code}"
 
@@ -485,6 +575,7 @@ async def run_infostealer_email(email):
         )
 
     response = await loop.run_in_executor(None, _request)
+    logger.info('InfoStealer email response status=%s query=%s', response.status_code, email)
     if response.status_code != 200:
         return f"API returned status code: {response.status_code}"
 
@@ -560,13 +651,13 @@ async def run_sublist3r(domain):
 @client.event
 async def on_ready():
     global commands_synced
-    print(f'Bot is online as {client.user}')
-    print('Monitoring commands.')
+    logger.info('Bot is online as %s', client.user)
+    logger.info('Monitoring commands.')
 
     if not commands_synced:
         await tree.sync()
         commands_synced = True
-        print('Slash commands synced.')
+        logger.info('Slash commands synced.')
 
 
 
@@ -598,6 +689,13 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     await interaction.response.defer(thinking=True)
     selected_type = search_type.value
     query = query.strip()
+    logger.info(
+        'Received /osint request type=%s query=%s user=%s user_id=%s',
+        selected_type,
+        query,
+        interaction.user,
+        interaction.user.id
+    )
 
 
     if selected_type == 'username' and not validate_username(query):
@@ -640,8 +738,11 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     aggregated = {}
     for tool_name, tool_func in tools:
         try:
+            logger.info('Starting tool=%s search_type=%s query=%s', tool_name, selected_type, query)
             output = await tool_func(query)
+            logger.debug('Raw output tool=%s query=%s output=%s', tool_name, query, shorten(output, limit=1200))
             findings = extract_findings(output, query, selected_type, tool_name)
+            logger.info('Tool completed tool=%s findings=%s query=%s', tool_name, len(findings), query)
             for finding in findings:
                 aggregate_text = finding
                 aggregate_key = finding.lower()
@@ -664,11 +765,26 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
                     aggregated[aggregate_key]['details_by_tool'].setdefault(tool_name, set()).add(detail)
 
         except subprocess.TimeoutExpired:
-            pass
+            logger.warning('Timeout running tool=%s search_type=%s query=%s', tool_name, selected_type, query)
         except Exception as exc:
-            print(f'Error running {tool_name} for user {interaction.user} ({interaction.user.id}): {exc}')
+            logger.exception(
+                'Error running tool=%s search_type=%s query=%s user=%s user_id=%s',
+                tool_name,
+                selected_type,
+                query,
+                interaction.user,
+                interaction.user.id
+            )
+
+    logger.info(
+        'Finished /osint request type=%s query=%s user_id=%s aggregated_findings=%s',
+        selected_type,
+        query,
+        interaction.user.id,
+        len(aggregated)
+    )
     await send_consolidated_results(interaction, query, aggregated)
 
 
-print('Starting bot...')
+logger.info('Starting bot... logs at %s level=%s', LOG_PATH, logging.getLevelName(logger.level))
 client.run(BOT_TOKEN)
