@@ -75,6 +75,35 @@ source holehevenv/bin/activate
 python -m pip install holehe
 deactivate
 
+
+
+echo ""
+echo "  [4f] Setting up whois in virtualenv..."
+cd "$TOOLS_DIR" || exit
+mkdir -p whois && cd whois
+python3 -m venv whoisvenv
+source whoisvenv/bin/activate
+python -m pip install python-whois
+deactivate
+
+echo ""
+echo "  [4g] Setting up theHarvester in virtualenv..."
+cd "$TOOLS_DIR" || exit
+mkdir -p theHarvester && cd theHarvester
+python3 -m venv theharvestervenv
+source theharvestervenv/bin/activate
+python -m pip install theHarvester
+deactivate
+
+echo ""
+echo "  [4h] Setting up Sublist3r in virtualenv..."
+cd "$TOOLS_DIR" || exit
+mkdir -p sublist3r && cd sublist3r
+python3 -m venv sublist3rvenv
+source sublist3rvenv/bin/activate
+python -m pip install sublist3r
+deactivate
+
 echo ""
 echo "[5/5] Setting up Discord bot virtual environment..."
 cd "$BOT_DIR"
