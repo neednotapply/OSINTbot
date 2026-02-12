@@ -126,6 +126,7 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
 
 def normalize_finding(line):
     clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
+    clean = re.sub(r'^\s*\[[*+\-]\]\s*', '', clean)
     clean = re.sub(r'^\s*\d+\.\s*', '', clean)
     clean = clean.replace('`', '').strip()
     clean = re.sub(r'\s+', ' ', clean)
@@ -152,7 +153,7 @@ def extract_findings(output, query, search_type):
     query_is_domain = not query_is_email and bool(re.match(r'^(?:[a-z0-9-]+\.)+[a-z]{2,}$', query_l))
     ignored = (
         'searching', 'checking', 'running', 'elapsed', 'timeout', 'api returned status',
-        'no results', 'no breaches found', 'found 0', 'usage:', '[-]', '[*]', '[+]',
+        'no results', 'no breaches found', 'found 0', 'usage:',
         'results saved', 'module', 'warning', 'error', 'version:', 'github :',
         'for btc donations', 'found 10000 result(s):'
     )
