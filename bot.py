@@ -15,7 +15,7 @@ def load_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as config_file:
         config = json.load(config_file)
 
-    required_keys = ['BOT_TOKEN', 'ADMIN_CHANNEL_ID', 'ADMIN_USER_ID']
+    required_keys = ['BOT_TOKEN']
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
         missing_str = ', '.join(missing_keys)
@@ -29,13 +29,10 @@ try:
 except (FileNotFoundError, json.JSONDecodeError, KeyError) as config_error:
     raise RuntimeError(
         f'Failed to load configuration from {CONFIG_PATH}. '
-        'Create or fix config.json with BOT_TOKEN, ADMIN_CHANNEL_ID, and ADMIN_USER_ID.'
+        'Create or fix config.json with BOT_TOKEN.'
     ) from config_error
 
 BOT_TOKEN = config['BOT_TOKEN']
-ADMIN_CHANNEL_ID = int(config['ADMIN_CHANNEL_ID'])
-ADMIN_USER_ID = int(config['ADMIN_USER_ID'])
-
 # Tool paths (portable - supports Linux and Windows)
 IS_WINDOWS = os.name == 'nt'
 TOOLS_BASE = os.path.expanduser('~/osint-tools')
@@ -104,15 +101,6 @@ def validate_domain(domain):
 # ============================================================
 # HELPERS
 # ============================================================
-async def log_command(user, command, search_term, status='🔍'):
-    admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-    if admin_channel:
-        log_msg = (
-            f"{status} **User:** {user} (`{user.id}`)\n"
-            f"**Command:** `{command} {search_term}`\n"
-            f"**Time:** <t:{int(discord.utils.utcnow().timestamp())}:F>"
-        )
-        await admin_channel.send(log_msg)
 
 
 async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
@@ -334,7 +322,7 @@ async def run_sublist3r(domain):
 async def on_ready():
     global commands_synced
     print(f'Bot is online as {client.user}')
-    print(f'Monitoring commands and logging to channel: {ADMIN_CHANNEL_ID}')
+    print('Monitoring commands.')
 
     if not commands_synced:
         await tree.sync()
@@ -388,7 +376,6 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     selected_type = search_type.value
     query = query.strip()
 
-    await log_command(interaction.user, '/osint', f'{selected_type}: {query}')
 
     if selected_type == 'username' and not validate_username(query):
         await interaction.followup.send('❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).')
@@ -446,10 +433,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
             status_lines.append(f'⏱️ {tool_name}: timed out')
         except Exception as exc:
             status_lines.append(f'❌ {tool_name}: error')
-            await log_command(interaction.user, f'/osint:{tool_name}', query, status='🚨')
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f'🚨 **{tool_name} Error** for user {interaction.user}: {str(exc)}')
+            print(f'Error running {tool_name} for user {interaction.user} ({interaction.user.id}): {exc}')
 
     await interaction.followup.send('## Source Status\n' + '\n'.join(status_lines))
     await send_consolidated_results(interaction, query, aggregated)
