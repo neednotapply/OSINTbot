@@ -1,25 +1,40 @@
-import discord
-import subprocess
 import asyncio
-import os
-import requests
 import json
+import os
 import re
+import subprocess
 
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE' # Replace with bot token
+import discord
+import requests
+from discord import app_commands
+
+BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'  # Replace with bot token
 ADMIN_CHANNEL_ID = 123456789  # Replace with your admin channel ID
 ADMIN_USER_ID = 123456789  # Replace with your Discord user ID
 
-# Tool paths (portable - works on any system)
-SHERLOCK_PATH = os.path.expanduser('~/.local/bin/sherlock')
-CUPID_PYTHON = os.path.expanduser('~/osint-tools/cupidcr4wl/cupidcr4wlvenv/bin/python')
-CUPID_SCRIPT = os.path.expanduser('~/osint-tools/cupidcr4wl/cc.py')
-CUPID_DIR = os.path.expanduser('~/osint-tools/cupidcr4wl')
-BLACKBIRD_PYTHON = os.path.expanduser('~/osint-tools/blackbird/blackbirdvenv/bin/python')
-BLACKBIRD_SCRIPT = os.path.expanduser('~/osint-tools/blackbird/blackbird.py')
-BLACKBIRD_DIR = os.path.expanduser('~/osint-tools/blackbird')
-HOLEHE_PATH = os.path.expanduser('~/osint-tools/holehe/holehevenv/bin/holehe')
-USER_SCANNER_PATH = os.path.expanduser('~/osint-tools/user-scanner/userscannervenv/bin/user-scanner')
+# Tool paths (portable - supports Linux and Windows)
+IS_WINDOWS = os.name == 'nt'
+TOOLS_BASE = os.path.expanduser('~/osint-tools')
+
+
+def venv_exec(tool_name, venv_name, executable):
+    script_dir = 'Scripts' if IS_WINDOWS else 'bin'
+    ext = '.exe' if IS_WINDOWS else ''
+    return os.path.join(TOOLS_BASE, tool_name, venv_name, script_dir, f'{executable}{ext}')
+
+
+SHERLOCK_PATH = 'sherlock' if IS_WINDOWS else os.path.expanduser('~/.local/bin/sherlock')
+CUPID_PYTHON = venv_exec('cupidcr4wl', 'cupidcr4wlvenv', 'python')
+CUPID_SCRIPT = os.path.join(TOOLS_BASE, 'cupidcr4wl', 'cc.py')
+CUPID_DIR = os.path.join(TOOLS_BASE, 'cupidcr4wl')
+BLACKBIRD_PYTHON = venv_exec('blackbird', 'blackbirdvenv', 'python')
+BLACKBIRD_SCRIPT = os.path.join(TOOLS_BASE, 'blackbird', 'blackbird.py')
+BLACKBIRD_DIR = os.path.join(TOOLS_BASE, 'blackbird')
+HOLEHE_PATH = venv_exec('holehe', 'holehevenv', 'holehe')
+USER_SCANNER_PATH = venv_exec('user-scanner', 'userscannervenv', 'user-scanner')
+WHOIS_CMD = 'whois' if IS_WINDOWS else '/usr/bin/whois'
+THEHARVESTER_CMD = 'theHarvester' if IS_WINDOWS else '/usr/bin/theHarvester'
+SUBLIST3R_CMD = 'sublist3r' if IS_WINDOWS else '/usr/bin/sublist3r'
 
 # Configure requests session
 session = requests.Session()
@@ -31,650 +46,390 @@ welcomed_users = set()
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)
+commands_synced = False
+
 
 # ============================================================
 # INPUT VALIDATION
 # ============================================================
-
 def validate_username(username):
-    """Only allow alphanumeric, underscore, hyphen, period. Max 50 chars."""
     if not username or len(username) > 50:
         return False
     return bool(re.match(r'^[a-zA-Z0-9_\-\.]+$', username))
 
+
 def validate_email(email):
-    """Basic email format check. Max 254 chars."""
     if not email or len(email) > 254:
         return False
     return bool(re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email))
 
+
 def validate_phone(phone):
-    """Only allow digits and common separators. Max 20 chars."""
     if not phone or len(phone) > 20:
         return False
     return bool(re.match(r'^[0-9+\-() ]+$', phone)) and any(c.isdigit() for c in phone)
 
-def validate_query(query):
-    """For breach search - allow email or alphanumeric username. Max 254 chars."""
-    if not query or len(query) > 254:
+
+def validate_domain(domain):
+    if not domain or len(domain) > 253:
         return False
-    return validate_email(query) or bool(re.match(r'^[a-zA-Z0-9_\-\.]+$', query))
+    return bool(re.match(r'^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$', domain))
+
 
 # ============================================================
+# HELPERS
+# ============================================================
+async def log_command(user, command, search_term, status='🔍'):
+    admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
+    if admin_channel:
+        log_msg = (
+            f"{status} **User:** {user} (`{user.id}`)\n"
+            f"**Command:** `{command} {search_term}`\n"
+            f"**Time:** <t:{int(discord.utils.utcnow().timestamp())}:F>"
+        )
+        await admin_channel.send(log_msg)
+
+
+async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
+    loop = asyncio.get_event_loop()
+
+    def _run():
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+            shell=False
+        )
+        if combine_streams:
+            return (result.stdout or '') + (result.stderr or '')
+        return result.stdout if result.stdout else result.stderr
+
+    return await loop.run_in_executor(None, _run)
+
+
+def normalize_finding(line):
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
+    clean = re.sub(r'^\s*\d+\.\s*', '', clean)
+    clean = clean.replace('`', '').strip()
+    clean = re.sub(r'\s+', ' ', clean)
+    return clean[:280]
+
+
+
+
+def markdown_escape(text):
+    return text.replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)')
+
+
+def linkify_finding(text):
+    url_pattern = re.compile(r'(https?://[^\s<>()]+)')
+
+    def _fmt(match):
+        url = match.group(1).rstrip('.,;:!?)')
+        display = url
+        if len(display) > 90:
+            display = display[:87] + '...'
+        return f'[{markdown_escape(display)}]({url})'
+
+    linked = url_pattern.sub(_fmt, text)
+    return linked
+
+def extract_findings(output, query):
+    if not output:
+        return []
+
+    findings = []
+    query_l = query.lower()
+    ignored = (
+        'searching', 'checking', 'running', 'elapsed', 'timeout', 'api returned status',
+        'no results', 'no breaches found', 'found 0', 'usage:', '[-]', '[*]', '[+]',
+        'results saved', 'module', 'warning', 'error'
+    )
+
+    for raw in output.splitlines():
+        line = normalize_finding(raw)
+        if not line or len(line) < 3:
+            continue
+
+        low = line.lower()
+        if any(token in low for token in ignored):
+            continue
+
+        has_query = query_l in low
+        has_url = 'http://' in low or 'https://' in low
+        looks_record = ':' in line or '@' in line
+
+        if has_query or has_url or looks_record:
+            findings.append(line)
+
+    return findings
+
+
+async def send_consolidated_results(interaction, query, aggregated):
+    if not aggregated:
+        await interaction.followup.send(f'✅ No consolidated findings for `{query}` across selected sources.')
+        return
+
+    duplicate_count = sum(1 for item in aggregated.values() if len(item['tools']) > 1)
+    header = (
+        f"## Consolidated Findings for `{query}`\n"
+        f"Unique findings: **{len(aggregated)}**\n"
+        f"Found on multiple sources: **{duplicate_count}**"
+    )
+    await interaction.followup.send(header)
+
+    lines = []
+    for item in sorted(aggregated.values(), key=lambda x: (-len(x['tools']), x['text'].lower())):
+        tools = ', '.join(sorted(item['tools']))
+        lines.append(f"- {linkify_finding(item['text'])}\n  ↳ Sources: {tools}")
+
+    chunk = ''
+    for line in lines:
+        candidate = (chunk + '\n' + line).strip()
+        if len(candidate) > 1800:
+            await interaction.followup.send(chunk)
+            chunk = line
+        else:
+            chunk = candidate
+
+    if chunk:
+        await interaction.followup.send(chunk)
+
+
+# ============================================================
+# TOOL RUNNERS
+# ============================================================
+async def run_sherlock(username):
+    return await run_subprocess([SHERLOCK_PATH, username, '--timeout', '10', '--nsfw', '--no-txt'], timeout=120)
+
+
+async def run_blackbird_username(username):
+    return await run_subprocess([BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--username', username], timeout=240, cwd=BLACKBIRD_DIR)
+
+
+async def run_cupid_username(username):
+    return await run_subprocess([CUPID_PYTHON, CUPID_SCRIPT, '-u', username], timeout=180, cwd=CUPID_DIR)
+
+
+async def run_breaches(query):
+    loop = asyncio.get_event_loop()
+
+    def _request():
+        return session.get('https://api.proxynova.com/comb', params={'query': query, 'start': 0, 'limit': 100}, timeout=20)
+
+    response = await loop.run_in_executor(None, _request)
+    if response.status_code != 200:
+        return f"API returned status code: {response.status_code}"
+
+    data = response.json()
+    if 'lines' in data and data['lines']:
+        result_text = f"Found {data.get('count', len(data['lines']))} result(s):\n\n"
+        for idx, line in enumerate(data['lines'][:100], 1):
+            result_text += f"{idx}. {line}\n"
+        return result_text
+
+    return 'No breaches found in COMB database.'
+
+
+async def run_infostealer_username(username):
+    loop = asyncio.get_event_loop()
+
+    def _request():
+        return session.get(
+            'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-username',
+            params={'username': username},
+            timeout=20
+        )
+
+    response = await loop.run_in_executor(None, _request)
+    if response.status_code != 200:
+        return f"API returned status code: {response.status_code}"
+
+    data = response.json()
+    if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
+        return json.dumps(data, indent=2)
+    return 'No results found in infostealer databases.'
+
+
+async def run_user_scanner_username(username):
+    return await run_subprocess([USER_SCANNER_PATH, '-u', username], timeout=300)
+
+
+async def run_blackbird_email(email):
+    return await run_subprocess([BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--email', email], timeout=240, cwd=BLACKBIRD_DIR)
+
+
+async def run_holehe(email):
+    return await run_subprocess([HOLEHE_PATH, email], timeout=180)
+
+
+async def run_infostealer_email(email):
+    loop = asyncio.get_event_loop()
+
+    def _request():
+        return session.get(
+            'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email',
+            params={'email': email},
+            timeout=20
+        )
+
+    response = await loop.run_in_executor(None, _request)
+    if response.status_code != 200:
+        return f"API returned status code: {response.status_code}"
+
+    data = response.json()
+    if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
+        return json.dumps(data, indent=2)
+    return 'No results found in infostealer databases.'
+
+
+async def run_user_scanner_email(email):
+    return await run_subprocess([USER_SCANNER_PATH, '-e', email], timeout=300)
+
+
+async def run_cupid_phone(phone):
+    return await run_subprocess([CUPID_PYTHON, CUPID_SCRIPT, '-p', phone], timeout=180, cwd=CUPID_DIR)
+
+
+async def run_whois(domain):
+    return await run_subprocess([WHOIS_CMD, domain], timeout=600)
+
+
+async def run_theharvester(domain):
+    return await run_subprocess([THEHARVESTER_CMD, '-d', domain, '-b', 'all'], timeout=600)
+
+
+async def run_sublist3r(domain):
+    return await run_subprocess([SUBLIST3R_CMD, '-d', domain, '-o', '/dev/stdout'], timeout=600, combine_streams=True)
+
 
 @client.event
 async def on_ready():
+    global commands_synced
     print(f'Bot is online as {client.user}')
-    print(f'Monitoring DMs and logging to channel: {ADMIN_CHANNEL_ID}')
+    print(f'Monitoring commands and logging to channel: {ADMIN_CHANNEL_ID}')
+
+    if not commands_synced:
+        await tree.sync()
+        commands_synced = True
+        print('Slash commands synced.')
+
 
 @client.event
 async def on_message(message):
-    # Ignore bot's own messages
     if message.author == client.user:
         return
 
-    # Only respond to DMs (ignore server channels)
+    # Keep onboarding in DM only so server channels are not spammed.
     if message.guild is not None:
         return
 
-    # Send welcome message on first DM
     if message.author.id not in welcomed_users:
         welcomed_users.add(message.author.id)
-        welcome_msg = """
-## 🤖 Welcome to BOTINT 🤖
+        await message.channel.send(
+            '## 🤖 Welcome to BOTINT 🤖\n\n'
+            'Use `/osint` for search and `/help` to view options.\n'
+            '`/osint` search types: Username, Email, Phone, Domain.'
+        )
 
-`!help` - Show this help message
 
-## 🛠️ Available Tools 🧰
+@tree.command(name='help', description='Show how to use /osint and available categories')
+async def help_command(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        '## BOTINT Help\n\n'
+        '**Main command:** `/osint`\n'
+        '**Search type options:** Username, Email, Phone, Domain\n\n'
+        '**Examples:**\n'
+        '- `/osint search_type:Username query:example_user`\n'
+        '- `/osint search_type:Email query:user@example.com`\n'
+        '- `/osint search_type:Phone query:+1234567890`\n'
+        '- `/osint search_type:Domain query:example.com`\n\n'
+        'Results are consolidated so identical findings from multiple tools are grouped with source attribution.'
+    )
 
-### Username Search:
-🕵️‍♂️ **Sherlock** - Search for usernames across multiple platforms
-     `!sherlock <username>`
 
-🐦 **Blackbird** - Search for usernames across multiple platforms
-     `!blackbird-username <username>`
+@tree.command(name='osint', description='Run an OSINT search by category')
+@app_commands.describe(search_type='Choose search category', query='Username, email, phone number, or domain')
+@app_commands.choices(search_type=[
+    app_commands.Choice(name='Username', value='username'),
+    app_commands.Choice(name='Email', value='email'),
+    app_commands.Choice(name='Phone', value='phone'),
+    app_commands.Choice(name='Domain', value='domain'),
+])
+async def osint(interaction: discord.Interaction, search_type: app_commands.Choice[str], query: str):
+    await interaction.response.defer(thinking=True)
+    selected_type = search_type.value
+    query = query.strip()
 
-💘 **cupidcr4wl** - Search for usernames on adult content platforms
-     `!cupidcr4wl-username <username>`
+    await log_command(interaction.user, '/osint', f'{selected_type}: {query}')
 
-💥 **Breaches** - Search COMB breach database
-     `!breaches <username>`
+    if selected_type == 'username' and not validate_username(query):
+        await interaction.followup.send('❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).')
+        return
+    if selected_type == 'email' and not validate_email(query):
+        await interaction.followup.send('❌ Invalid email format.')
+        return
+    if selected_type == 'phone' and not validate_phone(query):
+        await interaction.followup.send('❌ Invalid phone number. Use digits and common separators (+, -, (, ), spaces).')
+        return
+    if selected_type == 'domain' and not validate_domain(query):
+        await interaction.followup.send('❌ Invalid domain format.')
+        return
 
-🏴‍☠️ **InfoStealer** - Check username in infostealer logs
-     `!infostealer-username <username>`
+    if selected_type == 'username':
+        tools = [
+            ('Sherlock', run_sherlock),
+            ('Blackbird', run_blackbird_username),
+            ('cupidcr4wl', run_cupid_username),
+            ('Breaches', run_breaches),
+            ('InfoStealer', run_infostealer_username),
+            ('user-scanner', run_user_scanner_username),
+        ]
+    elif selected_type == 'email':
+        tools = [
+            ('Blackbird', run_blackbird_email),
+            ('Holehe', run_holehe),
+            ('Breaches', run_breaches),
+            ('InfoStealer', run_infostealer_email),
+            ('user-scanner', run_user_scanner_email),
+        ]
+    elif selected_type == 'phone':
+        tools = [('cupidcr4wl', run_cupid_phone)]
+    else:
+        tools = [('whois', run_whois), ('theHarvester', run_theharvester), ('Sublist3r', run_sublist3r)]
 
-🔎 **user-scanner** - Scan for username across platforms
-     `!user-scanner-username <username>`
+    await interaction.followup.send(f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tool(s).")
 
-### Email Search:
-🐦 **Blackbird** - Search an email across multiple platforms
-     `!blackbird-email <email>`
+    aggregated = {}
+    status_lines = []
 
-✉️ **Holehe** - Check email registration on multiple platforms
-     `!holehe <email>`
-
-💥 **Breaches** - Search COMB breach database
-     `!breaches <email>`
-
-🏴‍☠️ **InfoStealer** - Check email in infostealer logs
-     `!infostealer-email <email>`
-
-🔎 **user-scanner** - Scan for email across platforms
-     `!user-scanner-email <email>`
-
-### Phone Search:
-💘 **cupidcr4wl** - Search for phone numbers on adult content platforms
-     `!cupidcr4wl-phone <phonenumber>`
-
-### Website / Domain:
-🌐 **Whois** - Domain registration info
-     `!whois <domain>`
-
-🌾 **theHarvester** - Emails, subdomains, hosts, and more
-     `!theharvester <domain>`
-
-🔍 **Sublist3r** - Subdomain enumeration
-     `!sublist3r <domain>`
-
-**Note:** Searches may take 1-2 minutes depending on the tool and number of sites checked.
-        """
-        await message.channel.send(welcome_msg)
-
-    # --------------------------------------------------------
-    # Log ALL ! commands to admin channel before anything else
-    # --------------------------------------------------------
-    async def log_command(command, search_term, status="🔍"):
-        admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-        if admin_channel:
-            log_msg = (
-                f"{status} **User:** {message.author} (`{message.author.id}`)\n"
-                f"**Command:** `{command} {search_term}`\n"
-                f"**Time:** <t:{int(message.created_at.timestamp())}:F>"
-            )
-            await admin_channel.send(log_msg)
-
-    if message.content.startswith('!'):
-        parts = message.content.split(' ', 1)
-        cmd = parts[0]
-        args = parts[1] if len(parts) > 1 else ''
-        await log_command(cmd, args)
-
-    # --------------------------------------------------------
-    # Helper: send long output in chunks
-    # --------------------------------------------------------
-    async def send_output(output, tool_name):
-        if not output:
-            await message.channel.send(f"❌ No results returned from {tool_name}.")
-            return
-        chunk_size = 1900
-        for i in range(0, len(output), chunk_size):
-            chunk = output[i:i+chunk_size]
-            await message.channel.send(f'```\n{chunk}\n```')
-
-    # --------------------------------------------------------
-    # Commands
-    # --------------------------------------------------------
-
-    # !sherlock
-    if message.content.startswith('!sherlock '):
-        username = message.content[10:].strip()
-
-        if not validate_username(username):
-            await message.channel.send("❌ Invalid username. Only letters, numbers, underscores, hyphens, and periods allowed (max 50 chars).")
-            return
-
-        await message.channel.send(f'🕵️‍♂️ Searching for `{username}` with Sherlock...\nThis may take a minute.')
-        loop = asyncio.get_event_loop()
-
+    for tool_name, tool_func in tools:
         try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [SHERLOCK_PATH, username, '--timeout', '10', '--nsfw', '--no-txt'],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "Sherlock")
+            output = await tool_func(query)
+            findings = extract_findings(output, query)
+            status_lines.append(f'✅ {tool_name}: {len(findings)} extracted finding(s)')
+
+            for finding in findings:
+                key = finding.lower()
+                if key not in aggregated:
+                    aggregated[key] = {'text': finding, 'tools': set()}
+                aggregated[key]['tools'].add(tool_name)
 
         except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ Sherlock search timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running Sherlock.")
+            status_lines.append(f'⏱️ {tool_name}: timed out')
+        except Exception as exc:
+            status_lines.append(f'❌ {tool_name}: error')
+            await log_command(interaction.user, f'/osint:{tool_name}', query, status='🚨')
             admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
             if admin_channel:
-                await admin_channel.send(f"🚨 **Sherlock Error** for user {message.author}: {str(e)}")
+                await admin_channel.send(f'🚨 **{tool_name} Error** for user {interaction.user}: {str(exc)}')
 
-    # !cupidcr4wl-username
-    elif message.content.startswith('!cupidcr4wl-username '):
-        username = message.content[21:].strip()
+    await interaction.followup.send('## Source Status\n' + '\n'.join(status_lines))
+    await send_consolidated_results(interaction, query, aggregated)
 
-        if not validate_username(username):
-            await message.channel.send("❌ Invalid username. Only letters, numbers, underscores, hyphens, and periods allowed (max 50 chars).")
-            return
 
-        await message.channel.send(f'💘 Searching for username `{username}` with cupidcr4wl...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [CUPID_PYTHON, CUPID_SCRIPT, '-u', username],
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                    cwd=CUPID_DIR,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "cupidcr4wl")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ cupidcr4wl search timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running cupidcr4wl.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **cupidcr4wl Error** for user {message.author}: {str(e)}")
-
-    # !cupidcr4wl-phone
-    elif message.content.startswith('!cupidcr4wl-phone '):
-        phone = message.content[18:].strip()
-
-        if not validate_phone(phone):
-            await message.channel.send("❌ Invalid phone number. Only digits and common separators (+, -, (, ), spaces) allowed (max 20 chars).")
-            return
-
-        await message.channel.send(f'📱 Searching for phone number `{phone}` with cupidcr4wl...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [CUPID_PYTHON, CUPID_SCRIPT, '-p', phone],
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                    cwd=CUPID_DIR,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "cupidcr4wl")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ cupidcr4wl search timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running cupidcr4wl.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **cupidcr4wl Error** for user {message.author}: {str(e)}")
-
-    # !blackbird-username
-    elif message.content.startswith('!blackbird-username '):
-        username = message.content[20:].strip()
-
-        if not validate_username(username):
-            await message.channel.send("❌ Invalid username. Only letters, numbers, underscores, hyphens, and periods allowed (max 50 chars).")
-            return
-
-        await message.channel.send(f'🐦 Searching for username `{username}` with Blackbird...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--username', username],
-                    capture_output=True,
-                    text=True,
-                    timeout=240,
-                    cwd=BLACKBIRD_DIR,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "Blackbird")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ Blackbird search timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running Blackbird.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **Blackbird Error** for user {message.author}: {str(e)}")
-
-    # !blackbird-email
-    elif message.content.startswith('!blackbird-email '):
-        email = message.content[17:].strip()
-
-        if not validate_email(email):
-            await message.channel.send("❌ Invalid email format.")
-            return
-
-        await message.channel.send(f'🐦 Searching for email `{email}` with Blackbird...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--email', email],
-                    capture_output=True,
-                    text=True,
-                    timeout=240,
-                    cwd=BLACKBIRD_DIR,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "Blackbird")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ Blackbird search timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running Blackbird.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **Blackbird Error** for user {message.author}: {str(e)}")
-
-    # !holehe
-    elif message.content.startswith('!holehe '):
-        email = message.content[8:].strip()
-
-        if not validate_email(email):
-            await message.channel.send("❌ Invalid email format.")
-            return
-
-        await message.channel.send(f'✉️ Checking email `{email}` with Holehe...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [HOLEHE_PATH, email],
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "Holehe")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ Holehe search timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running Holehe.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **Holehe Error** for user {message.author}: {str(e)}")
-
-    # !breaches
-    elif message.content.startswith('!breaches '):
-        query = message.content[10:].strip()
-
-        if not validate_query(query):
-            await message.channel.send("❌ Invalid input. Please provide a valid email or username.")
-            return
-
-        await message.channel.send(f'💥 Searching COMB database for `{query}`...\n*Note: You can use email or username*')
-
-        try:
-            response = session.get(
-                'https://api.proxynova.com/comb',
-                params={'query': query, 'start': 0, 'limit': 100},
-                timeout=20
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                if 'lines' in data and data['lines']:
-                    result_text = f"**Found {data.get('count', len(data['lines']))} result(s):**\n\n"
-                    for idx, line in enumerate(data['lines'][:100], 1):
-                        result_text += f"{idx}. {line}\n"
-                    await send_output(result_text, "Breaches")
-                else:
-                    await message.channel.send("✅ No breaches found in COMB database.")
-            else:
-                await message.channel.send(f"❌ API returned status code: {response.status_code}")
-
-        except requests.Timeout:
-            await message.channel.send("⏱️ Request timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error querying breaches API.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **Breaches API Error** for user {message.author}: {str(e)}")
-
-    # !infostealer-email
-    elif message.content.startswith('!infostealer-email '):
-        email = message.content[19:].strip()
-
-        if not validate_email(email):
-            await message.channel.send("❌ Invalid email format.")
-            return
-
-        await message.channel.send(f'🏴‍☠️ Searching infostealer logs for email `{email}`...')
-
-        try:
-            response = session.get(
-                'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email',
-                params={'email': email},
-                timeout=20
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
-                    raw_output = json.dumps(data, indent=2)
-                    await send_output(raw_output, "InfoStealer")
-                else:
-                    await message.channel.send("✅ No results found in infostealer databases.")
-            else:
-                await message.channel.send(f"❌ API returned status code: {response.status_code}")
-
-        except requests.Timeout:
-            await message.channel.send("⏱️ Request timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error querying infostealer API.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **InfoStealer API Error** for user {message.author}: {str(e)}")
-
-    # !infostealer-username
-    elif message.content.startswith('!infostealer-username '):
-        username = message.content[22:].strip()
-
-        if not validate_username(username):
-            await message.channel.send("❌ Invalid username. Only letters, numbers, underscores, hyphens, and periods allowed (max 50 chars).")
-            return
-
-        await message.channel.send(f'🏴‍☠️ Searching infostealer logs for username `{username}`...')
-
-        try:
-            response = session.get(
-                'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-username',
-                params={'username': username},
-                timeout=20
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
-                    raw_output = json.dumps(data, indent=2)
-                    await send_output(raw_output, "InfoStealer")
-                else:
-                    await message.channel.send("✅ No results found in infostealer databases.")
-            else:
-                await message.channel.send(f"❌ API returned status code: {response.status_code}")
-
-        except requests.Timeout:
-            await message.channel.send("⏱️ Request timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error querying infostealer API.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **InfoStealer API Error** for user {message.author}: {str(e)}")
-
-    # !user-scanner-username
-    elif message.content.startswith('!user-scanner-username '):
-        username = message.content[23:].strip()
-
-        if not validate_username(username):
-            await message.channel.send("❌ Invalid username. Only letters, numbers, underscores, hyphens, and periods allowed (max 50 chars).")
-            return
-
-        await message.channel.send(f'🔎 Scanning for username `{username}` with user-scanner...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [USER_SCANNER_PATH, '-u', username],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "user-scanner")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ user-scanner timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running user-scanner.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **user-scanner Error** for user {message.author}: {str(e)}")
-
-    # !user-scanner-email
-    elif message.content.startswith('!user-scanner-email '):
-        email = message.content[20:].strip()
-
-        if not validate_email(email):
-            await message.channel.send("❌ Invalid email format.")
-            return
-
-        await message.channel.send(f'🔎 Scanning for email `{email}` with user-scanner...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    [USER_SCANNER_PATH, '-e', email],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "user-scanner")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ user-scanner timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running user-scanner.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **user-scanner Error** for user {message.author}: {str(e)}")
-
-    # !whois
-    elif message.content.startswith('!whois '):
-        domain = message.content[7:].strip()
-
-        await message.channel.send(f'🌐 Running whois on `{domain}`...')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    ['/usr/bin/whois', domain],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "whois")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ whois timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running whois.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **whois Error** for user {message.author}: {str(e)}")
-
-    # !theharvester
-    elif message.content.startswith('!theharvester '):
-        domain = message.content[14:].strip()
-
-        await message.channel.send(f'🌾 Running theHarvester on `{domain}`...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    ['/usr/bin/theHarvester', '-d', domain, '-b', 'all'],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                    shell=False
-                )
-            )
-            output = result.stdout if result.stdout else result.stderr
-            await send_output(output, "theHarvester")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ theHarvester timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running theHarvester.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **theHarvester Error** for user {message.author}: {str(e)}")
-
-    # !sublist3r
-    elif message.content.startswith('!sublist3r '):
-        domain = message.content[11:].strip()
-
-        await message.channel.send(f'🔍 Running Sublist3r on `{domain}`...\nThis may take a few minutes.')
-        loop = asyncio.get_event_loop()
-
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    ['/usr/bin/sublist3r', '-d', domain, '-o', '/dev/stdout'],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=600,
-                    shell=False
-                )
-            )
-            # Combine stdout and stderr — sublist3r sends status to stderr, results to stdout
-            output = (result.stdout or '') + (result.stderr or '')
-            await send_output(output, "Sublist3r")
-
-        except subprocess.TimeoutExpired:
-            await message.channel.send("⏱️ Sublist3r timed out. Try again later.")
-        except Exception as e:
-            await message.channel.send("❌ Error running Sublist3r.")
-            admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
-            if admin_channel:
-                await admin_channel.send(f"🚨 **Sublist3r Error** for user {message.author}: {str(e)}")
-
-    # !help
-    elif message.content.strip() == '!help':
-        help_text = """
-## 🛠️ Available Tools 🛠️
-
-### Username Search:
-🕵️‍♂️ **Sherlock** - `!sherlock <username>`
-🐦 **Blackbird** - `!blackbird-username <username>`
-💘 **cupidcr4wl** - `!cupidcr4wl-username <username>`
-💥 **Breaches** - `!breaches <username>`
-🏴‍☠️ **InfoStealer** - `!infostealer-username <username>`
-🔎 **user-scanner** - `!user-scanner-username <username>`
-
-### Email Search:
-🐦 **Blackbird** - `!blackbird-email <email>`
-✉️ **Holehe** - `!holehe <email>`
-💥 **Breaches** - `!breaches <email>`
-🏴‍☠️ **InfoStealer** - `!infostealer-email <email>`
-🔎 **user-scanner** - `!user-scanner-email <email>`
-
-### Phone Search:
-💘 **cupidcr4wl** - `!cupidcr4wl-phone <phonenumber>`
-
-### Website / Domain:
-🌐 **Whois** - `!whois <domain>`
-🌾 **theHarvester** - `!theharvester <domain>`
-🔍 **Sublist3r** - `!sublist3r <domain>`
-
-**Note:** Searches may take 1-2 minutes depending on the tool.
-        """
-        await message.channel.send(help_text)
-
-    # Unknown command
-    elif message.content.startswith('!'):
-        await message.channel.send("❓ Unknown command. Type `!help` for available commands.")
-
-# Run the bot
-print("Starting bot...")
+print('Starting bot...')
 client.run(BOT_TOKEN)
