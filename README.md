@@ -6,7 +6,7 @@ Original bot created by [OSINTI4L](https://github.com/OSINTI4L) (not hosted on G
 ## Commands
 
 - `/osint` — run a search
-- `/help` — show usage examples
+- `/help` — show search options and coverage
 
 `/osint` prompts for:
 - `Search type`: `Username`, `Email`, `Phone`, `Domain`
@@ -15,10 +15,10 @@ Original bot created by [OSINTI4L](https://github.com/OSINTI4L) (not hosted on G
 Results are consolidated: if the same finding appears in multiple tools, it is grouped once with all matching sources listed.
 Where possible, URL-style findings are sent as clickable Discord hyperlinks.
 
-## Search Coverage
+## Sources
 
-- **Username**: Sherlock, Blackbird, cupidcr4wl, Breaches, InfoStealer, user-scanner
-- **Email**: Blackbird, Holehe, Breaches, InfoStealer, user-scanner
+- **Username**: Sherlock, Blackbird, cupidcr4wl, proxynova, InfoStealer, user-scanner
+- **Email**: Blackbird, Holehe, proxynova, InfoStealer, user-scanner
 - **Phone**: cupidcr4wl
 - **Domain**: whois, theHarvester, Sublist3r
 
