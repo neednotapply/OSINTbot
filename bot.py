@@ -62,12 +62,8 @@ SUBLIST3R_CMD = 'sublist3r' if IS_WINDOWS else '/usr/bin/sublist3r'
 # Configure requests session
 session = requests.Session()
 
-# Track users who have been welcomed
-welcomed_users = set()
-
 # Setup bot
 intents = discord.Intents.default()
-intents.message_content = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 commands_synced = False
@@ -196,6 +192,16 @@ def extract_findings(output, query, search_type):
             if holehe_match:
                 status, site = holehe_match.groups()
                 site = site.strip()
+                site_low = site.lower()
+
+                # Holehe includes legend/output helper lines that are not actual findings.
+                if 'email used' in site_low or 'email not used' in site_low or 'rate limit' in site_low:
+                    continue
+
+                # Do not emit the queried email address as a finding.
+                if extract_primary_email(site):
+                    continue
+
                 if status == '+':
                     findings.append(site)
                 elif status == '!':
@@ -205,6 +211,11 @@ def extract_findings(output, query, search_type):
         line = normalize_finding(raw)
         if not line or len(line) < 3:
             continue
+
+        if search_type == 'email':
+            normalized_line = line.strip().lower().rstrip(':')
+            if normalized_line == query_l:
+                continue
 
         low = line.lower()
         if any(token in low for token in ignored):
@@ -235,16 +246,11 @@ def extract_findings(output, query, search_type):
 
 async def send_consolidated_results(interaction, query, aggregated):
     if not aggregated:
-        await interaction.followup.send(f'✅ No consolidated findings for `{query}` across selected sources.')
+        await interaction.edit_original_response(
+            content=f'✅ No consolidated findings for `{query}` across selected sources.',
+            suppress_embeds=True
+        )
         return
-
-    duplicate_count = sum(1 for item in aggregated.values() if len(item['tools']) > 1)
-    header = (
-        f"## Consolidated Findings for `{query}`\n"
-        f"Unique findings: **{len(aggregated)}**\n"
-        f"Found on multiple sources: **{duplicate_count}**"
-    )
-    await interaction.followup.send(header)
 
     by_source = {}
     multi_source = []
@@ -252,6 +258,8 @@ async def send_consolidated_results(interaction, query, aggregated):
     for item in sorted_items:
         if len(item['tools']) > 1:
             multi_source.append(item)
+            continue
+
         for tool in item['tools']:
             by_source.setdefault(tool, []).append(item)
 
@@ -260,8 +268,20 @@ async def send_consolidated_results(interaction, query, aggregated):
     if multi_source:
         lines.append('## Found on Multiple Sources')
         for item in multi_source:
-            tools = ', '.join(sorted(item['tools']))
-            lines.append(f"- {escape_for_discord(item['text'])}\n  ↳ Sources: {tools}")
+            details = sorted(
+                {
+                    detail
+                    for tool_details in item.get('details_by_tool', {}).values()
+                    for detail in tool_details
+                },
+                key=str.lower
+            )
+            base = f"- {escape_for_discord(item['text'])}"
+            if details:
+                detail_text = ', '.join(escape_for_discord(detail) for detail in details)
+                lines.append(f"{base}\n  ↳ {detail_text}")
+            else:
+                lines.append(base)
 
     for tool in sorted(by_source):
         lines.append(f'## Source: {escape_for_discord(tool)}')
@@ -269,17 +289,27 @@ async def send_consolidated_results(interaction, query, aggregated):
         for key in sorted(unique_items, key=str.lower):
             lines.append(render_finding_for_tool(unique_items[key], tool))
 
+    chunks = []
     chunk = ''
     for line in lines:
         candidate = (chunk + '\n' + line).strip()
         if len(candidate) > 1800:
-            await interaction.followup.send(chunk)
+            if chunk:
+                chunks.append(chunk)
             chunk = line
         else:
             chunk = candidate
 
     if chunk:
-        await interaction.followup.send(chunk)
+        chunks.append(chunk)
+
+    if not chunks:
+        chunks = [f'✅ No consolidated findings for `{query}` across selected sources.']
+
+    await interaction.edit_original_response(content=chunks[0], suppress_embeds=True)
+
+    for extra_chunk in chunks[1:]:
+        await interaction.followup.send(extra_chunk, suppress_embeds=True)
 
 
 # ============================================================
@@ -447,37 +477,21 @@ async def on_ready():
         print('Slash commands synced.')
 
 
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return
-
-    # Keep onboarding in DM only so server channels are not spammed.
-    if message.guild is not None:
-        return
-
-    if message.author.id not in welcomed_users:
-        welcomed_users.add(message.author.id)
-        await message.channel.send(
-            '## 🤖 Welcome to OSINTbot 🤖\n\n'
-            'Use `/osint` for search and `/help` to view options.\n'
-            '`/osint` search types: Username, Email, Phone, Domain.'
-        )
 
 
-@tree.command(name='help', description='Show how to use /osint and available categories')
+@tree.command(name='help', description='Show /osint usage and sources')
 async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         '## OSINTbot Help\n\n'
         '**Main command:** `/osint`\n'
         '**Search type options:** Username, Email, Phone, Domain\n\n'
-        '**Examples:**\n'
-        '- `/osint search_type:Username query:example_user`\n'
-        '- `/osint search_type:Email query:user@example.com`\n'
-        '- `/osint search_type:Phone query:+1234567890`\n'
-        '- `/osint search_type:Domain query:example.com`\n\n'
+        '**Sources:**\n'
+        '- **Username**: Sherlock, Blackbird, cupidcr4wl, proxynova, InfoStealer, user-scanner\n'
+        '- **Email**: Blackbird, Holehe, proxynova, InfoStealer, user-scanner\n'
+        '- **Phone**: cupidcr4wl\n'
+        '- **Domain**: whois, theHarvester, Sublist3r\n\n'
         'Results are consolidated so identical findings from multiple tools are grouped with source attribution.'
-    )
+    , suppress_embeds=True)
 
 
 @tree.command(name='osint', description='Run an OSINT search by category')
@@ -495,16 +509,16 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
 
 
     if selected_type == 'username' and not validate_username(query):
-        await interaction.followup.send('❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).')
+        await interaction.edit_original_response(content='❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).', suppress_embeds=True)
         return
     if selected_type == 'email' and not validate_email(query):
-        await interaction.followup.send('❌ Invalid email format.')
+        await interaction.edit_original_response(content='❌ Invalid email format.', suppress_embeds=True)
         return
     if selected_type == 'phone' and not validate_phone(query):
-        await interaction.followup.send('❌ Invalid phone number. Use digits and common separators (+, -, (, ), spaces).')
+        await interaction.edit_original_response(content='❌ Invalid phone number. Use digits and common separators (+, -, (, ), spaces).', suppress_embeds=True)
         return
     if selected_type == 'domain' and not validate_domain(query):
-        await interaction.followup.send('❌ Invalid domain format.')
+        await interaction.edit_original_response(content='❌ Invalid domain format.', suppress_embeds=True)
         return
 
     if selected_type == 'username':
@@ -529,17 +543,13 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     else:
         tools = [('whois', run_whois), ('theHarvester', run_theharvester), ('Sublist3r', run_sublist3r)]
 
-    await interaction.followup.send(f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.")
+    await interaction.edit_original_response(content=f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.", suppress_embeds=True)
 
     aggregated = {}
-    status_lines = []
-
     for tool_name, tool_func in tools:
         try:
             output = await tool_func(query)
             findings = extract_findings(output, query, selected_type)
-            status_lines.append(f'✅ {tool_name}: {len(findings)} extracted finding(s)')
-
             for finding in findings:
                 aggregate_text = finding
                 aggregate_key = finding.lower()
@@ -562,12 +572,9 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
                     aggregated[aggregate_key]['details_by_tool'].setdefault(tool_name, set()).add(detail)
 
         except subprocess.TimeoutExpired:
-            status_lines.append(f'⏱️ {tool_name}: timed out')
+            pass
         except Exception as exc:
-            status_lines.append(f'❌ {tool_name}: error')
             print(f'Error running {tool_name} for user {interaction.user} ({interaction.user.id}): {exc}')
-
-    await interaction.followup.send('## Source Status\n' + '\n'.join(status_lines))
     await send_consolidated_results(interaction, query, aggregated)
 
 
