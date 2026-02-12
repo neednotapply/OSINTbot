@@ -59,6 +59,9 @@ WHOIS_CMD = 'whois' if IS_WINDOWS else '/usr/bin/whois'
 THEHARVESTER_CMD = 'theHarvester' if IS_WINDOWS else '/usr/bin/theHarvester'
 SUBLIST3R_CMD = 'sublist3r' if IS_WINDOWS else '/usr/bin/sublist3r'
 
+# Source-specific finding parsers
+SOURCES_WITH_EMAIL_DETAILS = {'Breaches'}
+
 # Configure requests session
 session = requests.Session()
 
@@ -564,7 +567,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
                 aggregate_key = finding.lower()
                 detail = None
 
-                if selected_type == 'email':
+                if tool_name in SOURCES_WITH_EMAIL_DETAILS:
                     aggregate_text, detail = split_email_finding(finding)
                     aggregate_key = aggregate_text.lower()
 
