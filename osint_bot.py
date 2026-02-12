@@ -8,9 +8,33 @@ import discord
 import requests
 from discord import app_commands
 
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'  # Replace with bot token
-ADMIN_CHANNEL_ID = 123456789  # Replace with your admin channel ID
-ADMIN_USER_ID = 123456789  # Replace with your Discord user ID
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+
+
+def load_config(config_path):
+    with open(config_path, 'r', encoding='utf-8') as config_file:
+        config = json.load(config_file)
+
+    required_keys = ['BOT_TOKEN', 'ADMIN_CHANNEL_ID', 'ADMIN_USER_ID']
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        missing_str = ', '.join(missing_keys)
+        raise KeyError(f'Missing required config key(s): {missing_str}')
+
+    return config
+
+
+try:
+    config = load_config(CONFIG_PATH)
+except (FileNotFoundError, json.JSONDecodeError, KeyError) as config_error:
+    raise RuntimeError(
+        f'Failed to load configuration from {CONFIG_PATH}. '
+        'Create or fix config.json with BOT_TOKEN, ADMIN_CHANNEL_ID, and ADMIN_USER_ID.'
+    ) from config_error
+
+BOT_TOKEN = config['BOT_TOKEN']
+ADMIN_CHANNEL_ID = int(config['ADMIN_CHANNEL_ID'])
+ADMIN_USER_ID = int(config['ADMIN_USER_ID'])
 
 # Tool paths (portable - supports Linux and Windows)
 IS_WINDOWS = os.name == 'nt'
@@ -330,7 +354,7 @@ async def on_message(message):
     if message.author.id not in welcomed_users:
         welcomed_users.add(message.author.id)
         await message.channel.send(
-            '## 🤖 Welcome to BOTINT 🤖\n\n'
+            '## 🤖 Welcome to OSINTbot 🤖\n\n'
             'Use `/osint` for search and `/help` to view options.\n'
             '`/osint` search types: Username, Email, Phone, Domain.'
         )
@@ -339,7 +363,7 @@ async def on_message(message):
 @tree.command(name='help', description='Show how to use /osint and available categories')
 async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(
-        '## BOTINT Help\n\n'
+        '## OSINTbot Help\n\n'
         '**Main command:** `/osint`\n'
         '**Search type options:** Username, Email, Phone, Domain\n\n'
         '**Examples:**\n'
