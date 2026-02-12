@@ -132,7 +132,17 @@ def normalize_finding(line):
 
 def escape_for_discord(text):
     escaped_mentions = discord.utils.escape_mentions(text)
-    return discord.utils.escape_markdown(escaped_mentions)
+    escaped_text = discord.utils.escape_markdown(escaped_mentions)
+
+    def _suppress_embed_for_url(match):
+        url = match.group(0)
+        trailing_punctuation = ''
+        while url and url[-1] in '.,;:!?':
+            trailing_punctuation = url[-1] + trailing_punctuation
+            url = url[:-1]
+        return f'<{url}>{trailing_punctuation}'
+
+    return re.sub(r'https?://[^\s<>]+', _suppress_embed_for_url, escaped_text)
 
 
 def line_contains_exact_email(line, query_email):
@@ -247,8 +257,7 @@ def extract_findings(output, query, search_type):
 async def send_consolidated_results(interaction, query, aggregated):
     if not aggregated:
         await interaction.edit_original_response(
-            content=f'✅ No consolidated findings for `{query}` across selected sources.',
-            suppress_embeds=True
+            content=f'✅ No consolidated findings for `{query}` across selected sources.'
         )
         return
 
@@ -306,10 +315,10 @@ async def send_consolidated_results(interaction, query, aggregated):
     if not chunks:
         chunks = [f'✅ No consolidated findings for `{query}` across selected sources.']
 
-    await interaction.edit_original_response(content=chunks[0], suppress_embeds=True)
+    await interaction.edit_original_response(content=chunks[0])
 
     for extra_chunk in chunks[1:]:
-        await interaction.followup.send(extra_chunk, suppress_embeds=True)
+        await interaction.followup.send(extra_chunk)
 
 
 # ============================================================
@@ -491,7 +500,7 @@ async def help_command(interaction: discord.Interaction):
         '- **Phone**: cupidcr4wl\n'
         '- **Domain**: whois, theHarvester, Sublist3r\n\n'
         'Results are consolidated so identical findings from multiple tools are grouped with source attribution.'
-    , suppress_embeds=True)
+    )
 
 
 @tree.command(name='osint', description='Run an OSINT search by category')
@@ -509,16 +518,16 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
 
 
     if selected_type == 'username' and not validate_username(query):
-        await interaction.edit_original_response(content='❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).', suppress_embeds=True)
+        await interaction.edit_original_response(content='❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).')
         return
     if selected_type == 'email' and not validate_email(query):
-        await interaction.edit_original_response(content='❌ Invalid email format.', suppress_embeds=True)
+        await interaction.edit_original_response(content='❌ Invalid email format.')
         return
     if selected_type == 'phone' and not validate_phone(query):
-        await interaction.edit_original_response(content='❌ Invalid phone number. Use digits and common separators (+, -, (, ), spaces).', suppress_embeds=True)
+        await interaction.edit_original_response(content='❌ Invalid phone number. Use digits and common separators (+, -, (, ), spaces).')
         return
     if selected_type == 'domain' and not validate_domain(query):
-        await interaction.edit_original_response(content='❌ Invalid domain format.', suppress_embeds=True)
+        await interaction.edit_original_response(content='❌ Invalid domain format.')
         return
 
     if selected_type == 'username':
@@ -543,7 +552,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     else:
         tools = [('whois', run_whois), ('theHarvester', run_theharvester), ('Sublist3r', run_sublist3r)]
 
-    await interaction.edit_original_response(content=f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.", suppress_embeds=True)
+    await interaction.edit_original_response(content=f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.")
 
     aggregated = {}
     for tool_name, tool_func in tools:
