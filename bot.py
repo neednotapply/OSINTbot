@@ -193,6 +193,7 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
 
     def _run():
         missing = []
+        last_failure = None
         for command in commands:
             executable = command[0]
             if os.path.isabs(executable) and not os.path.exists(executable):
@@ -224,13 +225,29 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
             else:
                 output = result.stdout if result.stdout else result.stderr
 
-            logger.info(
-                'Fallback command succeeded command=%s returncode=%s output=%s',
+            if result.returncode == 0:
+                logger.info(
+                    'Fallback command succeeded command=%s returncode=%s output=%s',
+                    command,
+                    result.returncode,
+                    shorten(output)
+                )
+                return output
+
+            logger.warning(
+                'Fallback command failed command=%s returncode=%s output=%s',
                 command,
                 result.returncode,
                 shorten(output)
             )
-            return output
+            last_failure = (command, result.returncode, output)
+
+        if last_failure:
+            failed_command, returncode, output = last_failure
+            return (
+                f"Unable to run command successfully. Last attempted command: {failed_command}. "
+                f"Return code: {returncode}. Output: {shorten(output, limit=400)}"
+            )
 
         checked = ', '.join(sorted(set(missing))) if missing else 'tool executable'
         return (
