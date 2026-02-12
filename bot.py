@@ -143,6 +143,36 @@ def line_contains_exact_email(line, query_email):
     return any(match.lower() == query_email for match in re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', line))
 
 
+def extract_primary_email(line):
+    match = re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', line)
+    return match.group(0).lower() if match else None
+
+
+def split_email_finding(finding):
+    email = extract_primary_email(finding)
+    if not email:
+        return finding, None
+
+    detail = None
+    if ':' in finding:
+        left, right = finding.split(':', 1)
+        if extract_primary_email(left):
+            right = right.strip()
+            if right:
+                detail = right
+
+    return email, detail
+
+
+def render_finding_for_tool(item, tool_name):
+    base = f"- {escape_for_discord(item['text'])}"
+    details = sorted(item.get('details_by_tool', {}).get(tool_name, set()), key=str.lower)
+    if details:
+        detail_text = ', '.join(escape_for_discord(detail) for detail in details)
+        return f"{base}\n  ↳ {detail_text}"
+    return base
+
+
 def extract_findings(output, query, search_type):
     if not output:
         return []
@@ -159,6 +189,19 @@ def extract_findings(output, query, search_type):
     )
 
     for raw in output.splitlines():
+        raw_clean = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
+
+        if search_type == 'email':
+            holehe_match = re.match(r'^\[([+\-!x])\]\s+(.+)$', raw_clean)
+            if holehe_match:
+                status, site = holehe_match.groups()
+                site = site.strip()
+                if status == '+':
+                    findings.append(site)
+                elif status == '!':
+                    findings.append(f'{site} (rate-limited/blocked)')
+                continue
+
         line = normalize_finding(raw)
         if not line or len(line) < 3:
             continue
@@ -210,7 +253,7 @@ async def send_consolidated_results(interaction, query, aggregated):
         if len(item['tools']) > 1:
             multi_source.append(item)
         for tool in item['tools']:
-            by_source.setdefault(tool, []).append(item['text'])
+            by_source.setdefault(tool, []).append(item)
 
     lines = []
 
@@ -222,8 +265,9 @@ async def send_consolidated_results(interaction, query, aggregated):
 
     for tool in sorted(by_source):
         lines.append(f'## Source: {escape_for_discord(tool)}')
-        for finding in sorted(set(by_source[tool]), key=str.lower):
-            lines.append(f"- {escape_for_discord(finding)}")
+        unique_items = {item['text'].lower(): item for item in by_source[tool]}
+        for key in sorted(unique_items, key=str.lower):
+            lines.append(render_finding_for_tool(unique_items[key], tool))
 
     chunk = ''
     for line in lines:
@@ -497,10 +541,25 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
             status_lines.append(f'✅ {tool_name}: {len(findings)} extracted finding(s)')
 
             for finding in findings:
-                key = finding.lower()
-                if key not in aggregated:
-                    aggregated[key] = {'text': finding, 'tools': set()}
-                aggregated[key]['tools'].add(tool_name)
+                aggregate_text = finding
+                aggregate_key = finding.lower()
+                detail = None
+
+                if selected_type == 'email':
+                    aggregate_text, detail = split_email_finding(finding)
+                    aggregate_key = aggregate_text.lower()
+
+                if aggregate_key not in aggregated:
+                    aggregated[aggregate_key] = {
+                        'text': aggregate_text,
+                        'tools': set(),
+                        'details_by_tool': {}
+                    }
+
+                aggregated[aggregate_key]['tools'].add(tool_name)
+
+                if detail:
+                    aggregated[aggregate_key]['details_by_tool'].setdefault(tool_name, set()).add(detail)
 
         except subprocess.TimeoutExpired:
             status_lines.append(f'⏱️ {tool_name}: timed out')
