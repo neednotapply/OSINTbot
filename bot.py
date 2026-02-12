@@ -35,7 +35,9 @@ except (FileNotFoundError, json.JSONDecodeError, KeyError) as config_error:
 BOT_TOKEN = config['BOT_TOKEN']
 # Tool paths (portable - supports Linux and Windows)
 IS_WINDOWS = os.name == 'nt'
-TOOLS_BASE = os.path.expanduser('~/osint-tools')
+TOOLS_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'osint-tools')
+if not os.path.exists(TOOLS_BASE):
+    TOOLS_BASE = os.path.expanduser('~/osint-tools')
 
 
 def venv_exec(tool_name, venv_name, executable):
@@ -44,7 +46,11 @@ def venv_exec(tool_name, venv_name, executable):
     return os.path.join(TOOLS_BASE, tool_name, venv_name, script_dir, f'{executable}{ext}')
 
 
-SHERLOCK_PATH = 'sherlock' if IS_WINDOWS else os.path.expanduser('~/.local/bin/sherlock')
+SHERLOCK_PATH = venv_exec('sherlock', 'sherlockvenv', 'sherlock')
+if not os.path.exists(SHERLOCK_PATH):
+    SHERLOCK_PATH = os.path.expanduser('~/.local/bin/sherlock')
+if not os.path.exists(SHERLOCK_PATH):
+    SHERLOCK_PATH = 'sherlock'
 CUPID_PYTHON = venv_exec('cupidcr4wl', 'cupidcr4wlvenv', 'python')
 CUPID_SCRIPT = os.path.join(TOOLS_BASE, 'cupidcr4wl', 'cc.py')
 CUPID_DIR = os.path.join(TOOLS_BASE, 'cupidcr4wl')
@@ -131,34 +137,28 @@ def normalize_finding(line):
 
 
 
+def escape_for_discord(text):
+    escaped_mentions = discord.utils.escape_mentions(text)
+    return discord.utils.escape_markdown(escaped_mentions)
 
-def markdown_escape(text):
-    return text.replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)')
+
+def line_contains_exact_email(line, query_email):
+    return any(match.lower() == query_email for match in re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', line))
 
 
-def linkify_finding(text):
-    url_pattern = re.compile(r'(https?://[^\s<>()]+)')
-
-    def _fmt(match):
-        url = match.group(1).rstrip('.,;:!?)')
-        display = url
-        if len(display) > 90:
-            display = display[:87] + '...'
-        return f'[{markdown_escape(display)}]({url})'
-
-    linked = url_pattern.sub(_fmt, text)
-    return linked
-
-def extract_findings(output, query):
+def extract_findings(output, query, search_type):
     if not output:
         return []
 
     findings = []
     query_l = query.lower()
+    query_is_email = '@' in query_l
+    query_is_domain = not query_is_email and bool(re.match(r'^(?:[a-z0-9-]+\.)+[a-z]{2,}$', query_l))
     ignored = (
         'searching', 'checking', 'running', 'elapsed', 'timeout', 'api returned status',
         'no results', 'no breaches found', 'found 0', 'usage:', '[-]', '[*]', '[+]',
-        'results saved', 'module', 'warning', 'error'
+        'results saved', 'module', 'warning', 'error', 'version:', 'github :',
+        'for btc donations', 'found 10000 result(s):'
     )
 
     for raw in output.splitlines():
@@ -174,7 +174,17 @@ def extract_findings(output, query):
         has_url = 'http://' in low or 'https://' in low
         looks_record = ':' in line or '@' in line
 
-        if has_query or has_url or looks_record:
+        if search_type == 'email' and not line_contains_exact_email(line, query_l):
+            continue
+
+        if has_query:
+            findings.append(line)
+            continue
+
+        if (query_is_email or query_is_domain) and not has_query:
+            continue
+
+        if has_url or looks_record:
             findings.append(line)
 
     return findings
@@ -193,10 +203,27 @@ async def send_consolidated_results(interaction, query, aggregated):
     )
     await interaction.followup.send(header)
 
+    by_source = {}
+    multi_source = []
+    sorted_items = sorted(aggregated.values(), key=lambda x: (-len(x['tools']), x['text'].lower()))
+    for item in sorted_items:
+        if len(item['tools']) > 1:
+            multi_source.append(item)
+        for tool in item['tools']:
+            by_source.setdefault(tool, []).append(item['text'])
+
     lines = []
-    for item in sorted(aggregated.values(), key=lambda x: (-len(x['tools']), x['text'].lower())):
-        tools = ', '.join(sorted(item['tools']))
-        lines.append(f"- {linkify_finding(item['text'])}\n  ↳ Sources: {tools}")
+
+    if multi_source:
+        lines.append('## Found on Multiple Sources')
+        for item in multi_source:
+            tools = ', '.join(sorted(item['tools']))
+            lines.append(f"- {escape_for_discord(item['text'])}\n  ↳ Sources: {tools}")
+
+    for tool in sorted(by_source):
+        lines.append(f'## Source: {escape_for_discord(tool)}')
+        for finding in sorted(set(by_source[tool]), key=str.lower):
+            lines.append(f"- {escape_for_discord(finding)}")
 
     chunk = ''
     for line in lines:
@@ -262,7 +289,28 @@ async def run_infostealer_username(username):
 
     data = response.json()
     if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
-        return json.dumps(data, indent=2)
+        lines = []
+        important_keys = ['computer_name', 'os', 'operating_system', 'ip', 'country', 'city', 'date_compromised']
+        username_l = username.lower()
+
+        for idx, stealer in enumerate(data['stealers'][:100], 1):
+            if not isinstance(stealer, dict):
+                continue
+
+            pieces = [f'Record {idx}']
+            for key in important_keys:
+                value = stealer.get(key)
+                if isinstance(value, (str, int, float)) and str(value).strip():
+                    pieces.append(f'{key}={value}')
+
+            blob = json.dumps(stealer, ensure_ascii=False).lower()
+            if username_l not in blob:
+                continue
+
+            lines.append(' | '.join(pieces))
+
+        if lines:
+            return '\n'.join(lines)
     return 'No results found in infostealer databases.'
 
 
@@ -294,7 +342,28 @@ async def run_infostealer_email(email):
 
     data = response.json()
     if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
-        return json.dumps(data, indent=2)
+        lines = []
+        important_keys = ['computer_name', 'os', 'operating_system', 'ip', 'country', 'city', 'date_compromised']
+        email_l = email.lower()
+
+        for idx, stealer in enumerate(data['stealers'][:100], 1):
+            if not isinstance(stealer, dict):
+                continue
+
+            blob = json.dumps(stealer, ensure_ascii=False)
+            if not line_contains_exact_email(blob, email_l):
+                continue
+
+            pieces = [f'Record {idx}']
+            for key in important_keys:
+                value = stealer.get(key)
+                if isinstance(value, (str, int, float)) and str(value).strip():
+                    pieces.append(f'{key}={value}')
+
+            lines.append(' | '.join(pieces))
+
+        if lines:
+            return '\n'.join(lines)
     return 'No results found in infostealer databases.'
 
 
@@ -420,7 +489,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     for tool_name, tool_func in tools:
         try:
             output = await tool_func(query)
-            findings = extract_findings(output, query)
+            findings = extract_findings(output, query, selected_type)
             status_lines.append(f'✅ {tool_name}: {len(findings)} extracted finding(s)')
 
             for finding in findings:

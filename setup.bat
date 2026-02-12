@@ -6,8 +6,8 @@ echo   OSINT Discord Bot - Environment Setup (Windows)
 echo ================================================
 echo.
 
-set "BASE=%USERPROFILE%"
-set "BOT_DIR=%BASE%\discord-bot"
+for %%I in ("%~dp0.") do set "BASE=%%~fI"
+set "BOT_DIR=%BASE%"
 set "TOOLS_DIR=%BASE%\osint-tools"
 
 where git >nul 2>nul || (
@@ -28,8 +28,15 @@ python -m pipx ensurepath
 set "PATH=%USERPROFILE%\AppData\Roaming\Python\Python311\Scripts;%USERPROFILE%\.local\bin;%PATH%"
 
 echo.
-echo [1/6] Installing Sherlock...
-call pipx install sherlock-project
+echo [1/6] Setting up Sherlock...
+cd /d "%TOOLS_DIR%"
+if not exist sherlock mkdir sherlock
+cd /d "%TOOLS_DIR%\sherlock"
+python -m venv sherlockvenv
+call sherlockvenv\Scripts\activate.bat
+pip install --upgrade pip
+pip install sherlock-project
+call deactivate
 
 echo.
 echo [2/6] Cloning and setting up cupidcr4wl...

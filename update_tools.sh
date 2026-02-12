@@ -10,18 +10,25 @@ echo "  OSINT Tool Update Script"
 echo "================================================"
 echo ""
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOT_DIR="$SCRIPT_DIR"
+TOOLS_DIR="$SCRIPT_DIR/osint-tools"
+
 # Stop the bot before updating
 echo "[0/7] Stopping Discord bot..."
 sudo systemctl stop osint-bot 2>/dev/null && echo "✅ Bot stopped" || echo "ℹ️  Bot was not running"
 echo ""
 
 echo "[1/7] Updating Sherlock..."
-pipx upgrade sherlock-project
+cd "$TOOLS_DIR/sherlock" || exit
+source sherlockvenv/bin/activate
+pip install --upgrade sherlock-project
+deactivate
 echo "✅ Sherlock updated"
 echo ""
 
 echo "[2/7] Updating cupidcr4wl..."
-cd ~/osint-tools/cupidcr4wl || exit
+cd "$TOOLS_DIR/cupidcr4wl" || exit
 git pull origin main
 source cupidcr4wlvenv/bin/activate
 pip install --upgrade -r requirements.txt
@@ -30,7 +37,7 @@ echo "✅ cupidcr4wl updated"
 echo ""
 
 echo "[3/7] Updating blackbird..."
-cd ~/osint-tools/blackbird || exit
+cd "$TOOLS_DIR/blackbird" || exit
 git pull origin main
 source blackbirdvenv/bin/activate
 pip install --upgrade -r requirements.txt
@@ -39,7 +46,7 @@ echo "✅ blackbird updated"
 echo ""
 
 echo "[4/7] Updating holehe..."
-cd ~/osint-tools/holehe || exit
+cd "$TOOLS_DIR/holehe" || exit
 source holehevenv/bin/activate
 pip install --upgrade holehe
 deactivate
@@ -47,7 +54,7 @@ echo "✅ holehe updated"
 echo ""
 
 echo "[5/7] Updating user-scanner..."
-cd ~/osint-tools/user-scanner || exit
+cd "$TOOLS_DIR/user-scanner" || exit
 source userscannervenv/bin/activate
 pip install --upgrade user-scanner
 deactivate
@@ -61,7 +68,7 @@ echo "✅ System tools updated"
 echo ""
 
 echo "[7/7] Updating Discord bot dependencies..."
-cd ~/discord-bot || exit
+cd "$BOT_DIR" || exit
 source discordbotvenv/bin/activate
 pip install --upgrade discord.py requests
 deactivate
