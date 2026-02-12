@@ -17,8 +17,8 @@ Where possible, URL-style findings are sent as clickable Discord hyperlinks.
 
 ## Sources
 
-- **Username**: Sherlock, Blackbird, cupidcr4wl, proxynova, InfoStealer, user-scanner
-- **Email**: Blackbird, Holehe, proxynova, InfoStealer, user-scanner
+- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, InfoStealer, user-scanner
+- **Email**: Blackbird, Holehe, COMB, InfoStealer, user-scanner
 - **Phone**: cupidcr4wl
 - **Domain**: whois, theHarvester, Sublist3r
 
