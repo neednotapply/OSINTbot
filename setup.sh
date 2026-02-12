@@ -42,8 +42,8 @@ mkdir -p "$TOOLS_DIR/sherlock"
 cd "$TOOLS_DIR/sherlock"
 python3 -m venv sherlockvenv
 source sherlockvenv/bin/activate
-pip install --upgrade pip
-pip install sherlock-project
+python -m pip install --upgrade pip
+python -m pip install sherlock-project
 deactivate
 
 echo ""
@@ -53,7 +53,7 @@ git clone https://github.com/OSINTI4L/cupidcr4wl
 cd cupidcr4wl
 python3 -m venv cupidcr4wlvenv
 source cupidcr4wlvenv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 deactivate
 
 echo ""
@@ -63,7 +63,7 @@ git clone https://github.com/p1ngul1n0/blackbird
 cd blackbird || exit
 python3 -m venv blackbirdvenv
 source blackbirdvenv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 deactivate
 
 echo ""
@@ -72,7 +72,7 @@ cd "$TOOLS_DIR" || exit
 mkdir holehe && cd holehe
 python3 -m venv holehevenv
 source holehevenv/bin/activate
-pip3 install holehe
+python -m pip install holehe
 deactivate
 
 echo ""
@@ -80,7 +80,7 @@ echo "[5/5] Setting up Discord bot virtual environment..."
 cd "$BOT_DIR"
 python3 -m venv discordbotvenv
 source discordbotvenv/bin/activate
-pip install discord.py requests
+python -m pip install discord.py requests
 deactivate
 
 echo ""

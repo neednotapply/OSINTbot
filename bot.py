@@ -47,10 +47,6 @@ def venv_exec(tool_name, venv_name, executable):
 
 
 SHERLOCK_PATH = venv_exec('sherlock', 'sherlockvenv', 'sherlock')
-if not os.path.exists(SHERLOCK_PATH):
-    SHERLOCK_PATH = os.path.expanduser('~/.local/bin/sherlock')
-if not os.path.exists(SHERLOCK_PATH):
-    SHERLOCK_PATH = 'sherlock'
 CUPID_PYTHON = venv_exec('cupidcr4wl', 'cupidcr4wlvenv', 'python')
 CUPID_SCRIPT = os.path.join(TOOLS_BASE, 'cupidcr4wl', 'cc.py')
 CUPID_DIR = os.path.join(TOOLS_BASE, 'cupidcr4wl')
@@ -177,6 +173,9 @@ def extract_findings(output, query, search_type):
         if search_type == 'email' and not line_contains_exact_email(line, query_l):
             continue
 
+        if search_type in {'username', 'phone'} and not has_query:
+            continue
+
         if has_query:
             findings.append(line)
             continue
@@ -242,7 +241,11 @@ async def send_consolidated_results(interaction, query, aggregated):
 # TOOL RUNNERS
 # ============================================================
 async def run_sherlock(username):
-    return await run_subprocess([SHERLOCK_PATH, username, '--timeout', '10', '--nsfw', '--no-txt'], timeout=120)
+    return await run_subprocess(
+        [SHERLOCK_PATH, username, '--timeout', '10', '--nsfw', '--no-txt'],
+        timeout=120,
+        combine_streams=True
+    )
 
 
 async def run_blackbird_username(username):

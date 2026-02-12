@@ -34,8 +34,8 @@ if not exist sherlock mkdir sherlock
 cd /d "%TOOLS_DIR%\sherlock"
 python -m venv sherlockvenv
 call sherlockvenv\Scripts\activate.bat
-pip install --upgrade pip
-pip install sherlock-project
+python -m pip install --upgrade pip
+python -m pip install sherlock-project
 call deactivate
 
 echo.
@@ -45,7 +45,7 @@ if not exist cupidcr4wl git clone https://github.com/OSINTI4L/cupidcr4wl
 cd /d "%TOOLS_DIR%\cupidcr4wl"
 python -m venv cupidcr4wlvenv
 call cupidcr4wlvenv\Scripts\activate.bat
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 call deactivate
 
 echo.
@@ -55,7 +55,7 @@ if not exist blackbird git clone https://github.com/p1ngul1n0/blackbird
 cd /d "%TOOLS_DIR%\blackbird"
 python -m venv blackbirdvenv
 call blackbirdvenv\Scripts\activate.bat
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 call deactivate
 
 echo.
@@ -65,7 +65,7 @@ if not exist holehe mkdir holehe
 cd /d "%TOOLS_DIR%\holehe"
 python -m venv holehevenv
 call holehevenv\Scripts\activate.bat
-pip install holehe
+python -m pip install holehe
 call deactivate
 
 echo.
@@ -75,7 +75,7 @@ if not exist user-scanner git clone https://github.com/mishakorzik/UserFinder us
 cd /d "%TOOLS_DIR%\user-scanner"
 python -m venv userscannervenv
 call userscannervenv\Scripts\activate.bat
-pip install user-scanner
+python -m pip install user-scanner
 call deactivate
 
 echo.
@@ -83,7 +83,7 @@ echo [6/6] Setting up bot virtual environment...
 cd /d "%BOT_DIR%"
 python -m venv discordbotvenv
 call discordbotvenv\Scripts\activate.bat
-pip install discord.py requests
+python -m pip install discord.py requests
 call deactivate
 
 echo.

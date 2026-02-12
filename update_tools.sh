@@ -22,7 +22,7 @@ echo ""
 echo "[1/7] Updating Sherlock..."
 cd "$TOOLS_DIR/sherlock" || exit
 source sherlockvenv/bin/activate
-pip install --upgrade sherlock-project
+python -m pip install --upgrade sherlock-project
 deactivate
 echo "✅ Sherlock updated"
 echo ""
@@ -31,7 +31,7 @@ echo "[2/7] Updating cupidcr4wl..."
 cd "$TOOLS_DIR/cupidcr4wl" || exit
 git pull origin main
 source cupidcr4wlvenv/bin/activate
-pip install --upgrade -r requirements.txt
+python -m pip install --upgrade -r requirements.txt
 deactivate
 echo "✅ cupidcr4wl updated"
 echo ""
@@ -40,7 +40,7 @@ echo "[3/7] Updating blackbird..."
 cd "$TOOLS_DIR/blackbird" || exit
 git pull origin main
 source blackbirdvenv/bin/activate
-pip install --upgrade -r requirements.txt
+python -m pip install --upgrade -r requirements.txt
 deactivate
 echo "✅ blackbird updated"
 echo ""
@@ -48,7 +48,7 @@ echo ""
 echo "[4/7] Updating holehe..."
 cd "$TOOLS_DIR/holehe" || exit
 source holehevenv/bin/activate
-pip install --upgrade holehe
+python -m pip install --upgrade holehe
 deactivate
 echo "✅ holehe updated"
 echo ""
@@ -56,7 +56,7 @@ echo ""
 echo "[5/7] Updating user-scanner..."
 cd "$TOOLS_DIR/user-scanner" || exit
 source userscannervenv/bin/activate
-pip install --upgrade user-scanner
+python -m pip install --upgrade user-scanner
 deactivate
 echo "✅ user-scanner updated"
 echo ""
@@ -70,7 +70,7 @@ echo ""
 echo "[7/7] Updating Discord bot dependencies..."
 cd "$BOT_DIR" || exit
 source discordbotvenv/bin/activate
-pip install --upgrade discord.py requests
+python -m pip install --upgrade discord.py requests
 deactivate
 echo "✅ Bot dependencies updated"
 echo ""
