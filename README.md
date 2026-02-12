@@ -48,9 +48,7 @@ setup.bat
 Edit `config.json`:
 ```json
 {
-  "BOT_TOKEN": "YOUR_BOT_TOKEN_HERE",
-  "ADMIN_CHANNEL_ID": 123456789,
-  "ADMIN_USER_ID": 123456789
+  "BOT_TOKEN": "YOUR_BOT_TOKEN_HERE"
 }
 ```
 
@@ -87,4 +85,3 @@ update_tools.bat
 - **Slash commands not visible**: re-invite bot with `applications.commands` scope.
 - **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
 - **Tool errors/timeouts**: check your bot logs and re-run update scripts.
-- **No admin logs**: verify `ADMIN_CHANNEL_ID` and bot permissions in that channel.
