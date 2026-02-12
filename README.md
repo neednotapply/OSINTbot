@@ -1,6 +1,7 @@
 # OSINT Discord Bot
 
-A Discord bot that runs OSINT searches with a single slash command and consolidated results.
+A Discord bot that runs OSINT searches with a single slash command and consolidated results.  
+Original bot created by [OSINTI4L](https://github.com/OSINTI4L) (not hosted on GitHub). This repository contains my modified version.
 
 ## Commands
 
