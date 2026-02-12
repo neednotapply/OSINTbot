@@ -182,12 +182,13 @@ def render_finding_for_tool(item, tool_name):
     return base
 
 
-def extract_findings(output, query, search_type):
+def extract_findings(output, query, search_type, tool_name=None):
     if not output:
         return []
 
     findings = []
     query_l = query.lower()
+    tool_l = (tool_name or '').lower()
     query_is_email = '@' in query_l
     query_is_domain = not query_is_email and bool(re.match(r'^(?:[a-z0-9-]+\.)+[a-z]{2,}$', query_l))
     ignored = (
@@ -199,6 +200,14 @@ def extract_findings(output, query, search_type):
 
     for raw in output.splitlines():
         raw_clean = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
+
+        if tool_l == 'blackbird' and search_type in {'username', 'email'}:
+            blackbird_match = re.match(r'^\[([+\-])\]\s+(.+)$', raw_clean)
+            if blackbird_match:
+                status, text = blackbird_match.groups()
+                if status == '+':
+                    findings.append(normalize_finding(text))
+                continue
 
         if search_type == 'email':
             holehe_match = re.match(r'^\[([+\-!x])\]\s+(.+)$', raw_clean)
@@ -225,6 +234,8 @@ def extract_findings(output, query, search_type):
         if not line or len(line) < 3:
             continue
 
+        is_structured_record = bool(re.match(r'^record\s+\d+\b', line, flags=re.IGNORECASE)) or (' | ' in line and '=' in line)
+
         if search_type == 'email':
             normalized_line = line.strip().lower().rstrip(':')
             if normalized_line == query_l:
@@ -238,20 +249,20 @@ def extract_findings(output, query, search_type):
         has_url = 'http://' in low or 'https://' in low
         looks_record = ':' in line or '@' in line
 
-        if search_type == 'email' and not line_contains_exact_email(line, query_l):
+        if search_type == 'email' and not line_contains_exact_email(line, query_l) and not is_structured_record:
             continue
 
-        if search_type in {'username', 'phone'} and not has_query:
+        if search_type in {'username', 'phone'} and not has_query and not is_structured_record:
             continue
 
         if has_query:
             findings.append(line)
             continue
 
-        if (query_is_email or query_is_domain) and not has_query:
+        if (query_is_email or query_is_domain) and not has_query and not is_structured_record:
             continue
 
-        if has_url or looks_record:
+        if has_url or looks_record or is_structured_record:
             findings.append(line)
 
     return findings
@@ -563,7 +574,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     for tool_name, tool_func in tools:
         try:
             output = await tool_func(query)
-            findings = extract_findings(output, query, selected_type)
+            findings = extract_findings(output, query, selected_type, tool_name)
             for finding in findings:
                 aggregate_text = finding
                 aggregate_key = finding.lower()
