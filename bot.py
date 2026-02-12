@@ -50,6 +50,22 @@ def shorten(text, limit=500):
     return f'{cleaned[:limit]}... [truncated {len(cleaned) - limit} chars]'
 
 
+def collect_subprocess_output(result, combine_streams=False):
+    stdout = result.stdout or ''
+    stderr = result.stderr or ''
+
+    if combine_streams:
+        return stdout + stderr
+
+    if result.returncode == 0:
+        return stdout or stderr
+
+    if stdout and stderr:
+        return f'STDOUT:\n{stdout}\nSTDERR:\n{stderr}'
+
+    return stdout or stderr
+
+
 def load_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as config_file:
         config = json.load(config_file)
@@ -165,10 +181,7 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
             cwd=cwd,
             shell=False
         )
-        if combine_streams:
-            output = (result.stdout or '') + (result.stderr or '')
-        else:
-            output = result.stdout if result.stdout else result.stderr
+        output = collect_subprocess_output(result, combine_streams=combine_streams)
 
         logger.info(
             'Finished subprocess command=%s returncode=%s output=%s',
@@ -220,10 +233,7 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
                 missing.append(executable)
                 continue
 
-            if combine_streams:
-                output = (result.stdout or '') + (result.stderr or '')
-            else:
-                output = result.stdout if result.stdout else result.stderr
+            output = collect_subprocess_output(result, combine_streams=combine_streams)
 
             if result.returncode == 0:
                 logger.info(
