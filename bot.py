@@ -484,7 +484,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     else:
         tools = [('whois', run_whois), ('theHarvester', run_theharvester), ('Sublist3r', run_sublist3r)]
 
-    await interaction.followup.send(f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tool(s).")
+    await interaction.followup.send(f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.")
 
     aggregated = {}
     status_lines = []

@@ -89,7 +89,7 @@ call deactivate
 echo.
 echo ================================================
 echo Setup complete.
-echo Next: copy osint_bot.py into %BOT_DIR% and configure config.json values.
+echo Next: copy bot.py into %BOT_DIR% and configure config.json values.
 echo Run manually with:
 echo   cd /d %BOT_DIR%
 echo   discordbotvenv\Scripts\python osint_bot.py
