@@ -6,12 +6,15 @@ echo   OSINT Tool Update Script (Windows)
 echo ================================================
 echo.
 
-set "BASE=%USERPROFILE%"
-set "BOT_DIR=%BASE%\discord-bot"
+for %%I in ("%~dp0.") do set "BASE=%%~fI"
+set "BOT_DIR=%BASE%"
 set "TOOLS_DIR=%BASE%\osint-tools"
 
 echo [1/6] Updating Sherlock...
-call pipx upgrade sherlock-project
+cd /d "%TOOLS_DIR%\sherlock" || goto :err
+call sherlockvenv\Scripts\activate.bat
+pip install --upgrade sherlock-project
+call deactivate
 
 echo.
 echo [2/6] Updating cupidcr4wl...

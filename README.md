@@ -56,14 +56,14 @@ Edit `config.json`:
 
 #### Linux
 ```bash
-cd ~/discord-bot
+cd /path/to/OSINTbot
 source discordbotvenv/bin/activate
 python osint_bot.py
 ```
 
 #### Windows
 ```bat
-cd /d %USERPROFILE%\discord-bot
+cd /d C:\path\to\OSINTbot
 discordbotvenv\Scripts\python osint_bot.py
 ```
 
