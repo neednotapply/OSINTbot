@@ -44,11 +44,13 @@ setup.bat
 ```
 
 ### 3) Configure the bot
-Edit `osint_bot.py`:
-```python
-BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'
-ADMIN_CHANNEL_ID = 123456789
-ADMIN_USER_ID = 123456789
+Edit `config.json`:
+```json
+{
+  "BOT_TOKEN": "YOUR_BOT_TOKEN_HERE",
+  "ADMIN_CHANNEL_ID": 123456789,
+  "ADMIN_USER_ID": 123456789
+}
 ```
 
 ### 4) Run the bot
