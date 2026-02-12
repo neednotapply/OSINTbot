@@ -314,7 +314,7 @@ def extract_findings(output, query, search_type, tool_name=None):
 
 
 async def send_consolidated_results(interaction, query, aggregated):
-    query_header = f"## Search Term\n`{escape_for_discord(query)}`"
+    query_header = f"\n`{escape_for_discord(query)}`"
 
     if not aggregated:
         await interaction.edit_original_response(
