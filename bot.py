@@ -2,7 +2,9 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 
 import discord
 import requests
@@ -58,6 +60,9 @@ USER_SCANNER_PATH = venv_exec('user-scanner', 'userscannervenv', 'user-scanner')
 WHOIS_CMD = 'whois' if IS_WINDOWS else '/usr/bin/whois'
 THEHARVESTER_CMD = 'theHarvester' if IS_WINDOWS else '/usr/bin/theHarvester'
 SUBLIST3R_CMD = 'sublist3r' if IS_WINDOWS else '/usr/bin/sublist3r'
+WHOIS_PYTHON = venv_exec('whois', 'whoisvenv', 'python')
+THEHARVESTER_PYTHON = venv_exec('theHarvester', 'theharvestervenv', 'python')
+SUBLIST3R_PYTHON = venv_exec('sublist3r', 'sublist3rvenv', 'python')
 
 # Source-specific finding parsers
 SOURCES_WITH_EMAIL_DETAILS = {'COMB'}
@@ -119,6 +124,46 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
         if combine_streams:
             return (result.stdout or '') + (result.stderr or '')
         return result.stdout if result.stdout else result.stderr
+
+    return await loop.run_in_executor(None, _run)
+
+
+async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_streams=False):
+    loop = asyncio.get_event_loop()
+
+    def _run():
+        missing = []
+        for command in commands:
+            executable = command[0]
+            if os.path.isabs(executable) and not os.path.exists(executable):
+                missing.append(executable)
+                continue
+            if not os.path.isabs(executable) and shutil.which(executable) is None and executable != sys.executable:
+                missing.append(executable)
+                continue
+
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=cwd,
+                    shell=False
+                )
+            except FileNotFoundError:
+                missing.append(executable)
+                continue
+
+            if combine_streams:
+                return (result.stdout or '') + (result.stderr or '')
+            return result.stdout if result.stdout else result.stderr
+
+        checked = ', '.join(sorted(set(missing))) if missing else 'tool executable'
+        return (
+            f"Unable to run command. Missing executable(s): {checked}. "
+            'Install/repair the OSINT tools and retry.'
+        )
 
     return await loop.run_in_executor(None, _run)
 
@@ -479,15 +524,37 @@ async def run_cupid_phone(phone):
 
 
 async def run_whois(domain):
-    return await run_subprocess([WHOIS_CMD, domain], timeout=600)
+    return await run_subprocess_with_fallback(
+        [
+            [WHOIS_PYTHON, '-m', 'whois', domain],
+            [WHOIS_CMD, domain],
+            [sys.executable, '-m', 'whois', domain]
+        ],
+        timeout=600
+    )
 
 
 async def run_theharvester(domain):
-    return await run_subprocess([THEHARVESTER_CMD, '-d', domain, '-b', 'all'], timeout=600)
+    return await run_subprocess_with_fallback(
+        [
+            [THEHARVESTER_PYTHON, '-m', 'theHarvester', '-d', domain, '-b', 'all'],
+            [THEHARVESTER_CMD, '-d', domain, '-b', 'all'],
+            [sys.executable, '-m', 'theHarvester', '-d', domain, '-b', 'all']
+        ],
+        timeout=600
+    )
 
 
 async def run_sublist3r(domain):
-    return await run_subprocess([SUBLIST3R_CMD, '-d', domain, '-o', '/dev/stdout'], timeout=600, combine_streams=True)
+    return await run_subprocess_with_fallback(
+        [
+            [SUBLIST3R_PYTHON, '-m', 'sublist3r', '-d', domain],
+            [SUBLIST3R_CMD, '-d', domain],
+            [sys.executable, '-m', 'sublist3r', '-d', domain]
+        ],
+        timeout=600,
+        combine_streams=True
+    )
 
 
 @client.event

@@ -78,8 +78,40 @@ call userscannervenv\Scripts\activate.bat
 python -m pip install user-scanner
 call deactivate
 
+
+
 echo.
-echo [6/6] Setting up bot virtual environment...
+echo [6/9] Setting up whois...
+cd /d "%TOOLS_DIR%"
+if not exist whois mkdir whois
+cd /d "%TOOLS_DIR%\whois"
+python -m venv whoisvenv
+call whoisvenv\Scripts\activate.bat
+python -m pip install python-whois
+call deactivate
+
+echo.
+echo [7/9] Setting up theHarvester...
+cd /d "%TOOLS_DIR%"
+if not exist theHarvester mkdir theHarvester
+cd /d "%TOOLS_DIR%\theHarvester"
+python -m venv theharvestervenv
+call theharvestervenv\Scripts\activate.bat
+python -m pip install theHarvester
+call deactivate
+
+echo.
+echo [8/9] Setting up Sublist3r...
+cd /d "%TOOLS_DIR%"
+if not exist sublist3r mkdir sublist3r
+cd /d "%TOOLS_DIR%\sublist3r"
+python -m venv sublist3rvenv
+call sublist3rvenv\Scripts\activate.bat
+python -m pip install sublist3r
+call deactivate
+
+echo.
+echo [9/9] Setting up bot virtual environment...
 cd /d "%BOT_DIR%"
 python -m venv discordbotvenv
 call discordbotvenv\Scripts\activate.bat

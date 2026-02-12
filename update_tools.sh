@@ -61,13 +61,38 @@ deactivate
 echo "✅ user-scanner updated"
 echo ""
 
-echo "[6/7] Updating system tools (whois, theHarvester, sublist3r)..."
+
+
+echo "[6/10] Updating whois (venv)..."
+cd "$TOOLS_DIR/whois" || exit
+source whoisvenv/bin/activate
+python -m pip install --upgrade python-whois
+deactivate
+echo "✅ whois updated"
+echo ""
+
+echo "[7/10] Updating theHarvester (venv)..."
+cd "$TOOLS_DIR/theHarvester" || exit
+source theharvestervenv/bin/activate
+python -m pip install --upgrade theHarvester
+deactivate
+echo "✅ theHarvester updated"
+echo ""
+
+echo "[8/10] Updating Sublist3r (venv)..."
+cd "$TOOLS_DIR/sublist3r" || exit
+source sublist3rvenv/bin/activate
+python -m pip install --upgrade sublist3r
+deactivate
+echo "✅ Sublist3r updated"
+echo ""
+echo "[9/10] Updating system tools (whois, theHarvester, sublist3r)..."
 sudo apt update
 sudo apt upgrade -y whois sublist3r theHarvester
 echo "✅ System tools updated"
 echo ""
 
-echo "[7/7] Updating Discord bot dependencies..."
+echo "[10/10] Updating Discord bot dependencies..."
 cd "$BOT_DIR" || exit
 source discordbotvenv/bin/activate
 python -m pip install --upgrade discord.py requests

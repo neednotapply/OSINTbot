@@ -46,8 +46,31 @@ call userscannervenv\Scripts\activate.bat
 python -m pip install --upgrade user-scanner
 call deactivate
 
+
+
 echo.
-echo [6/6] Updating bot dependencies...
+echo [6/9] Updating whois...
+cd /d "%TOOLS_DIR%\whois" || goto :err
+call whoisvenv\Scripts\activate.bat
+python -m pip install --upgrade python-whois
+call deactivate
+
+echo.
+echo [7/9] Updating theHarvester...
+cd /d "%TOOLS_DIR%\theHarvester" || goto :err
+call theharvestervenv\Scripts\activate.bat
+python -m pip install --upgrade theHarvester
+call deactivate
+
+echo.
+echo [8/9] Updating Sublist3r...
+cd /d "%TOOLS_DIR%\sublist3r" || goto :err
+call sublist3rvenv\Scripts\activate.bat
+python -m pip install --upgrade sublist3r
+call deactivate
+
+echo.
+echo [9/9] Updating bot dependencies...
 cd /d "%BOT_DIR%" || goto :err
 call discordbotvenv\Scripts\activate.bat
 python -m pip install --upgrade discord.py requests
