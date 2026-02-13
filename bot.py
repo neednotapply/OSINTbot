@@ -1,4 +1,8 @@
 import asyncio
+import base64
+import binascii
+import hashlib
+import io
 import json
 import logging
 import os
@@ -277,6 +281,53 @@ def normalize_finding(line):
     return clean[:280]
 
 
+MIME_EXTENSIONS = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/bmp': 'bmp',
+}
+
+
+def extract_embedded_images(output, tool_name=None):
+    if not output or (tool_name or '').lower() != 'blackbird':
+        return []
+
+    artifacts = []
+    seen_hashes = set()
+    clean_output = re.sub(r'\x1b\[[0-9;]*m', '', output)
+    pattern = re.compile(r'(data:(image/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+))')
+
+    for match in pattern.finditer(clean_output):
+        mime = match.group(2).lower()
+        encoded = re.sub(r'\s+', '', match.group(3))
+        if not encoded:
+            continue
+
+        try:
+            blob = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+
+        if not blob or len(blob) > 8 * 1024 * 1024:
+            continue
+
+        digest = hashlib.sha256(blob).hexdigest()
+        if digest in seen_hashes:
+            continue
+        seen_hashes.add(digest)
+
+        ext = MIME_EXTENSIONS.get(mime, 'bin')
+        artifacts.append({
+            'filename': f'blackbird_embedded_{digest[:12]}.{ext}',
+            'bytes': blob,
+            'mime': mime,
+        })
+
+    logger.info('Extracted embedded images tool=%s count=%s', tool_name, len(artifacts))
+    return artifacts
+
 
 def escape_for_discord(text):
     escaped_mentions = discord.utils.escape_mentions(text)
@@ -342,16 +393,47 @@ def extract_findings(output, query, search_type, tool_name=None):
         'results saved', 'module', 'warning', 'error', 'version:', 'github :',
         'for btc donations', 'found 10000 result(s):'
     )
+    blackbird_started = False
+    pending_blackbird_site = None
 
     for raw in output.splitlines():
         raw_clean = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
 
         if tool_l == 'blackbird' and search_type in {'username', 'email'}:
+            if 'downloading site list' in raw_clean.lower():
+                blackbird_started = True
+                pending_blackbird_site = None
+                continue
+
+            if not blackbird_started:
+                continue
+
+            if pending_blackbird_site and re.match(r'^https?://', raw_clean):
+                findings.append(normalize_finding(f'[{pending_blackbird_site}] {raw_clean}'))
+                pending_blackbird_site = None
+                continue
+
+            if 'enumerating accounts with username' in raw_clean.lower() or 'check completed in' in raw_clean.lower():
+                pending_blackbird_site = None
+                continue
+
             blackbird_match = re.match(r'^\[([+\-])\]\s+(.+)$', raw_clean)
             if blackbird_match:
                 status, text = blackbird_match.groups()
                 if status == '+':
                     findings.append(normalize_finding(text))
+                continue
+
+            if raw_clean.startswith(('✔', '✅')):
+                line_without_status = raw_clean[1:].strip(' \t\uFE0F')
+                site_match = re.match(r'^\[([^\]]+)\]\s*(.*)$', line_without_status)
+                if site_match:
+                    site, target = site_match.groups()
+                    target = target.strip()
+                    if target:
+                        findings.append(normalize_finding(f'[{site}] {target}'))
+                    else:
+                        pending_blackbird_site = site
                 continue
 
         if search_type == 'email':
@@ -420,7 +502,7 @@ def extract_findings(output, query, search_type, tool_name=None):
     return findings
 
 
-async def send_consolidated_results(interaction, query, aggregated):
+async def send_consolidated_results(interaction, query, aggregated, image_artifacts=None):
     query_header = f"\n`{escape_for_discord(query)}`"
 
     if not aggregated:
@@ -495,6 +577,14 @@ async def send_consolidated_results(interaction, query, aggregated):
 
     for extra_chunk in chunks[1:]:
         await interaction.followup.send(extra_chunk)
+
+    if image_artifacts:
+        for artifact in image_artifacts:
+            file_obj = discord.File(io.BytesIO(artifact['bytes']), filename=artifact['filename'])
+            await interaction.followup.send(
+                content=f"🖼️ Decoded embedded image from {artifact.get('source', 'Blackbird')} ({artifact['mime']})",
+                file=file_obj
+            )
 
 
 # ============================================================
@@ -763,13 +853,23 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     await interaction.edit_original_response(content=f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.")
 
     aggregated = {}
+    image_artifacts = []
     for tool_name, tool_func in tools:
         try:
             logger.info('Starting tool=%s search_type=%s query=%s', tool_name, selected_type, query)
             output = await tool_func(query)
             logger.debug('Raw output tool=%s query=%s output=%s', tool_name, query, shorten(output, limit=1200))
+
+            extracted_images = extract_embedded_images(output, tool_name)
+            for image in extracted_images:
+                image['source'] = tool_name
+                image_artifacts.append(image)
+
             findings = extract_findings(output, query, selected_type, tool_name)
-            logger.info('Tool completed tool=%s findings=%s query=%s', tool_name, len(findings), query)
+            if extracted_images:
+                findings.append(f"Embedded image decoded ({len(extracted_images)})")
+
+            logger.info('Tool completed tool=%s findings=%s query=%s images=%s', tool_name, len(findings), query, len(extracted_images))
             for finding in findings:
                 aggregate_text = finding
                 aggregate_key = finding.lower()
@@ -810,7 +910,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
         interaction.user.id,
         len(aggregated)
     )
-    await send_consolidated_results(interaction, query, aggregated)
+    await send_consolidated_results(interaction, query, aggregated, image_artifacts=image_artifacts)
 
 
 logger.info('Starting bot... logs at %s level=%s', LOG_PATH, logging.getLevelName(logger.level))
