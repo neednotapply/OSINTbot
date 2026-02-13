@@ -329,6 +329,14 @@ def normalize_finding(line):
     return clean[:280]
 
 
+def format_site_finding(site, value):
+    site_clean = normalize_finding(site).strip('[]')
+    value_clean = normalize_finding(value).rstrip(',').strip()
+    if not site_clean or not value_clean:
+        return None
+    return f'{site_clean}: {value_clean}'
+
+
 MIME_EXTENSIONS = {
     'image/png': 'png',
     'image/jpeg': 'jpg',
@@ -444,7 +452,11 @@ def extract_findings(output, query, search_type, tool_name=None):
     blackbird_started = False
     pending_blackbird_site = None
 
-    for raw in output.splitlines():
+    raw_lines = output.splitlines()
+    if tool_l == 'user-scanner' and '\\n' in output:
+        raw_lines = output.replace('\\n', '\n').splitlines()
+
+    for raw in raw_lines:
         raw_clean = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
 
         if tool_l == 'blackbird' and search_type in {'username', 'email'}:
@@ -464,7 +476,9 @@ def extract_findings(output, query, search_type, tool_name=None):
                 continue
 
             if pending_blackbird_site and re.match(r'^https?://', raw_clean):
-                findings.append(normalize_finding(f'[{pending_blackbird_site}] {raw_clean}'))
+                normalized = format_site_finding(pending_blackbird_site, raw_clean)
+                if normalized:
+                    findings.append(normalized)
                 pending_blackbird_site = None
                 continue
 
@@ -486,9 +500,36 @@ def extract_findings(output, query, search_type, tool_name=None):
                     site, target = site_match.groups()
                     target = target.strip()
                     if target:
-                        findings.append(normalize_finding(f'[{site}] {target}'))
+                        normalized = format_site_finding(site, target)
+                        if normalized:
+                            findings.append(normalized)
                     else:
                         pending_blackbird_site = site
+                continue
+
+        if tool_l == 'cupidcr4wl' and search_type in {'username', 'phone'}:
+            cupid_match = re.match(
+                r'^↳\s+(?:Possible\s+)?Account\s+found\s+on\s+(.+?):\s*(https?://\S+),?$',
+                raw_clean,
+                flags=re.IGNORECASE
+            )
+            if cupid_match:
+                site, target = cupid_match.groups()
+                normalized = format_site_finding(site, target)
+                if normalized:
+                    findings.append(normalized)
+                continue
+
+        if tool_l == 'user-scanner' and search_type in {'username', 'email'}:
+            scanner_match = re.match(r'^\[✘\]\s+(.+?)\s+\(([^)]+)\):\s+Taken\s*$', raw_clean, flags=re.IGNORECASE)
+            if scanner_match:
+                site, account = scanner_match.groups()
+                normalized = format_site_finding(site, account)
+                if normalized:
+                    findings.append(normalized)
+                continue
+
+            if 'available' in raw_clean.lower() or raw_clean.startswith('[✔]'):
                 continue
 
         if search_type == 'email':
