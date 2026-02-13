@@ -200,6 +200,9 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=
 
     def _run():
         proc_env = os.environ.copy()
+        if IS_WINDOWS:
+            proc_env.setdefault('PYTHONUTF8', '1')
+            proc_env.setdefault('PYTHONIOENCODING', 'utf-8')
         if env:
             proc_env.update(env)
 
@@ -207,6 +210,8 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=
             command,
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=timeout,
             cwd=cwd,
             shell=False,
@@ -260,13 +265,20 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
 
             try:
                 logger.info('Attempting fallback command: %s', command)
+                proc_env = os.environ.copy()
+                if IS_WINDOWS:
+                    proc_env.setdefault('PYTHONUTF8', '1')
+                    proc_env.setdefault('PYTHONIOENCODING', 'utf-8')
                 result = subprocess.run(
                     command,
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
+                    errors='replace',
                     timeout=timeout,
                     cwd=cwd,
-                    shell=False
+                    shell=False,
+                    env=proc_env
                 )
             except FileNotFoundError:
                 logger.warning('FileNotFoundError while running executable: %s', executable)
@@ -436,10 +448,17 @@ def extract_findings(output, query, search_type, tool_name=None):
         raw_clean = re.sub(r'\x1b\[[0-9;]*m', '', raw).strip()
 
         if tool_l == 'blackbird' and search_type in {'username', 'email'}:
-            if 'downloading site list' in raw_clean.lower():
+            lowered = raw_clean.lower()
+            if (
+                'downloading site list' in lowered
+                or 'sites list is up to date' in lowered
+                or 'enumerating accounts with username' in lowered
+                or 'enumerating accounts with email' in lowered
+            ):
                 blackbird_started = True
-                pending_blackbird_site = None
-                continue
+
+            if not blackbird_started and raw_clean.startswith(('✔', '✅', '[+]', '[!]')):
+                blackbird_started = True
 
             if not blackbird_started:
                 continue
