@@ -166,7 +166,29 @@ def validate_domain(domain):
 # ============================================================
 
 
-async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
+def summarize_subprocess_failure(output):
+    if not output:
+        return 'no output captured'
+
+    cleaned = [line.strip() for line in str(output).splitlines() if line.strip()]
+    if not cleaned:
+        return 'no output captured'
+
+    traceback_start = None
+    for idx, line in enumerate(cleaned):
+        if line.startswith('Traceback (most recent call last):'):
+            traceback_start = idx
+            break
+
+    if traceback_start is not None:
+        tail = cleaned[traceback_start:]
+        exception_line = tail[-1] if tail else cleaned[-1]
+        return f'{exception_line} (traceback lines={len(tail)})'
+
+    return cleaned[-1]
+
+
+async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=None):
     loop = asyncio.get_event_loop()
     logger.info(
         'Running subprocess command=%s timeout=%ss cwd=%s combine_streams=%s',
@@ -177,22 +199,36 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False):
     )
 
     def _run():
+        proc_env = os.environ.copy()
+        if env:
+            proc_env.update(env)
+
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=cwd,
-            shell=False
+            shell=False,
+            env=proc_env
         )
         output = collect_subprocess_output(result, combine_streams=combine_streams)
 
-        logger.info(
-            'Finished subprocess command=%s returncode=%s output=%s',
-            command,
-            result.returncode,
-            shorten(output)
-        )
+        if result.returncode == 0:
+            logger.info(
+                'Finished subprocess command=%s returncode=%s output=%s',
+                command,
+                result.returncode,
+                shorten(output)
+            )
+        else:
+            logger.warning(
+                'Subprocess failed command=%s returncode=%s summary=%s output=%s',
+                command,
+                result.returncode,
+                summarize_subprocess_failure(output),
+                shorten(output, limit=900)
+            )
         return output
 
     return await loop.run_in_executor(None, _run)
@@ -599,7 +635,18 @@ async def run_sherlock(username):
 
 
 async def run_blackbird_username(username):
-    return await run_subprocess([BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--username', username], timeout=240, cwd=BLACKBIRD_DIR)
+    blackbird_env = {
+        'PYTHONUTF8': '1',
+        'PYTHONIOENCODING': 'utf-8',
+        'TERM': 'dumb',
+        'NO_COLOR': '1',
+    }
+    return await run_subprocess(
+        [BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--username', username],
+        timeout=240,
+        cwd=BLACKBIRD_DIR,
+        env=blackbird_env
+    )
 
 
 async def run_cupid_username(username):
