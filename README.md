@@ -61,9 +61,9 @@ chmod +x run_bot.sh
 ./run_bot.sh
 ```
 
-Or run the venv interpreter directly through the bootstrap:
+Or run the venv interpreter directly:
 ```bash
-discordbotvenv/bin/python run_bot.py
+discordbotvenv/bin/python bot.py
 ```
 
 #### Windows
@@ -72,18 +72,17 @@ cd /d C:\path\to\OSINTbot
 run_bot.bat
 ```
 
-Or run the venv interpreter directly through the bootstrap:
+Or run the venv interpreter directly:
 ```bat
-discordbotvenv\Scripts\python.exe run_bot.py
+discordbotvenv\Scripts\python.exe bot.py
 ```
 
 Do not use bare `py bot.py` or bare `python bot.py` unless you intentionally want to use the global Python environment instead of the repo virtual environment.
 
 ## Launchers
 
-- `run_bot.py` is the cross-platform Python bootstrap. It imports repo startup hooks before loading `bot.py` so compatibility fixes are active before `discord.py` / `aiohttp` import.
-- `run_bot.sh` is the Unix launcher for Linux/macOS-style shells. It uses `discordbotvenv/bin/python run_bot.py` when available, then falls back to `python3` or `python`.
-- `run_bot.bat` is the Windows launcher. It uses `discordbotvenv\Scripts\python.exe run_bot.py` when available, then falls back to `py`.
+- `run_bot.sh` is the Unix launcher for Linux/macOS-style shells. It uses `discordbotvenv/bin/python bot.py` when available, then falls back to `python3` or `python`.
+- `run_bot.bat` is the Windows launcher. It uses `discordbotvenv\Scripts\python.exe bot.py` when available, then falls back to `py`.
 
 ## Windows SSL note
 
@@ -93,7 +92,7 @@ If Python crashes during `import discord` with:
 ssl.SSLError: [ASN1] nested asn1 error
 ```
 
-that usually means Python hit a malformed certificate while loading the Windows certificate store. The repository includes `sitecustomize.py`, and `run_bot.py` imports it explicitly before `bot.py` imports `discord.py` / `aiohttp`. The startup hook retries SSL context creation with the `certifi` CA bundle.
+that usually means Python hit a malformed certificate while loading the Windows certificate store. `bot.py` patches Python SSL before importing `discord.py` / `aiohttp` and retries SSL context creation with the `certifi` CA bundle.
 
 The workaround is not a substitute for eventually cleaning the bad certificate from Windows, but it should get the bot running.
 
