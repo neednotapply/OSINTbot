@@ -58,25 +58,49 @@ Edit `config.json`:
 ```bash
 cd /path/to/OSINTbot
 source discordbotvenv/bin/activate
-python osint_bot.py
+python bot.py
 ```
 
 #### Windows
 ```bat
 cd /d C:\path\to\OSINTbot
-discordbotvenv\Scripts\python osint_bot.py
+run_bot.bat
 ```
 
+Or run the venv interpreter directly:
+```bat
+discordbotvenv\Scripts\python.exe bot.py
+```
+
+Do not use bare `py bot.py` unless you intentionally want to use the global Python environment instead of the repo virtual environment.
+
+## Windows SSL note
+
+If Python crashes during `import discord` with:
+
+```text
+ssl.SSLError: [ASN1] nested asn1 error
+```
+
+that usually means Python hit a malformed certificate while loading the Windows certificate store. The repository includes `sitecustomize.py`, which Python imports before `bot.py`; it retries SSL context creation with the `certifi` CA bundle so `discord.py` / `aiohttp` can finish importing.
+
+The workaround is not a substitute for eventually cleaning the bad certificate from Windows, but it should get the bot running.
 
 ## Logging
 
-The bot now writes detailed execution logs to both stdout and `osintbot.log` (rotated at ~2MB with 3 backups).
+The bot writes detailed execution logs to both stdout and `osintbot.log` (rotated at ~2MB with 3 backups).
 
 - Set `OSINTBOT_LOG_LEVEL` to control verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`).
 - Default level is `INFO`.
 - Use `DEBUG` when diagnosing silent failures, parser misses, or tool subprocess issues.
 
-Example:
+Windows example:
+```bat
+set OSINTBOT_LOG_LEVEL=DEBUG
+run_bot.bat
+```
+
+Linux/macOS example:
 ```bash
 OSINTBOT_LOG_LEVEL=DEBUG python bot.py
 ```
@@ -99,3 +123,4 @@ update_tools.bat
 - **Slash commands not visible**: re-invite bot with `applications.commands` scope.
 - **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
 - **Tool errors/timeouts**: check your bot logs and re-run update scripts.
+- **Windows import-time SSL crash**: pull the latest repo changes, run `setup.bat`, then use `run_bot.bat` instead of `py bot.py`.
