@@ -54,11 +54,16 @@ Edit `config.json`:
 
 ### 4) Run the bot
 
-#### Linux
+#### Linux/macOS/Unix-like shells
 ```bash
 cd /path/to/OSINTbot
-source discordbotvenv/bin/activate
-python bot.py
+chmod +x run_bot.sh
+./run_bot.sh
+```
+
+Or run the venv interpreter directly:
+```bash
+discordbotvenv/bin/python bot.py
 ```
 
 #### Windows
@@ -72,7 +77,12 @@ Or run the venv interpreter directly:
 discordbotvenv\Scripts\python.exe bot.py
 ```
 
-Do not use bare `py bot.py` unless you intentionally want to use the global Python environment instead of the repo virtual environment.
+Do not use bare `py bot.py` or bare `python bot.py` unless you intentionally want to use the global Python environment instead of the repo virtual environment.
+
+## Launchers
+
+- `run_bot.sh` is the Unix launcher for Linux/macOS-style shells. It uses `discordbotvenv/bin/python` when available, then falls back to `python3` or `python`.
+- `run_bot.bat` is the Windows launcher. It uses `discordbotvenv\Scripts\python.exe` when available, then falls back to `py`.
 
 ## Windows SSL note
 
@@ -102,7 +112,7 @@ run_bot.bat
 
 Linux/macOS example:
 ```bash
-OSINTBOT_LOG_LEVEL=DEBUG python bot.py
+OSINTBOT_LOG_LEVEL=DEBUG ./run_bot.sh
 ```
 
 ## Updating
