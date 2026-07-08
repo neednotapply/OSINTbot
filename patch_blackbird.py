@@ -2,8 +2,8 @@
 
 Blackbird's update check or local JSON state can fail on Windows and return a
 non-zero exit code even when useful stdout is produced. OSINTbot parses stdout,
-so this wrapper forces --no-update and treats upstream failures as a clean exit
-while keeping the failure detail compact on stderr.
+so this wrapper forces --no-update, filters splash/banner noise, and treats
+upstream failures as a clean exit while keeping failure detail compact on stderr.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ WRAPPER = '''"""OSINTbot wrapper around upstream Blackbird."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import runpy
 import sys
@@ -38,17 +40,90 @@ os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 os.environ.setdefault('TERM', 'dumb')
 os.environ.setdefault('NO_COLOR', '1')
 
+SPLASH_CHARS = set('▄█▓▒░▀▐▌▙▛▜▟▚▞')
+
+
+def _looks_like_splash(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if 'lucas antoniaci' in stripped.lower():
+        return True
+    splash_count = sum(1 for ch in stripped if ch in SPLASH_CHARS)
+    return splash_count >= max(3, len(stripped) // 6)
+
+
+def _filter_stdout(text: str) -> str:
+    clean_lines = []
+    saw_interesting = False
+    skipped_prefix = False
+
+    interesting_markers = (
+        'downloading site list',
+        'sites list is up to date',
+        'enumerating accounts',
+        'check completed',
+        '[+',
+        '[-',
+        '[!',
+        '✔',
+        '✅',
+        'http://',
+        'https://',
+    )
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+
+        if _looks_like_splash(line):
+            skipped_prefix = True
+            continue
+
+        if lowered.startswith('⏭') or 'skipping update' in lowered:
+            skipped_prefix = True
+            continue
+
+        if not saw_interesting:
+            if any(marker in lowered for marker in interesting_markers):
+                saw_interesting = True
+            elif skipped_prefix and not stripped:
+                continue
+            elif not stripped:
+                continue
+            else:
+                # Drop arbitrary preamble/splash text before Blackbird begins useful output.
+                skipped_prefix = True
+                continue
+
+        clean_lines.append(line)
+
+    return '\n'.join(clean_lines).strip()
+
+
 sys.argv[0] = UPSTREAM
+_buffer = io.StringIO()
 try:
-    runpy.run_path(UPSTREAM, run_name='__main__')
+    with contextlib.redirect_stdout(_buffer):
+        runpy.run_path(UPSTREAM, run_name='__main__')
 except SystemExit as exc:
+    filtered = _filter_stdout(_buffer.getvalue())
+    if filtered:
+        print(filtered)
     if exc.code not in (None, 0):
         print(f'[OSINTbot] Blackbird exited with code {exc.code}; preserving stdout for parser.', file=sys.stderr)
     raise SystemExit(0)
 except Exception as exc:
+    filtered = _filter_stdout(_buffer.getvalue())
+    if filtered:
+        print(filtered)
     short_trace = ''.join(traceback.format_exception_only(type(exc), exc)).strip()
     print(f'[OSINTbot] Blackbird suppressed upstream exception: {short_trace}', file=sys.stderr)
     raise SystemExit(0)
+else:
+    filtered = _filter_stdout(_buffer.getvalue())
+    if filtered:
+        print(filtered)
 '''
 
 
