@@ -8,18 +8,65 @@ import logging
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 from logging.handlers import RotatingFileHandler
+from urllib.parse import urlparse
+
+# ---------------------------------------------------------------------------
+# Startup compatibility
+# ---------------------------------------------------------------------------
+# discord.py imports aiohttp, and aiohttp creates an SSL context during import.
+# On some Windows installs, Python can crash there while loading a malformed
+# certificate from the Windows certificate store. Patch before importing discord.
+_ORIGINAL_CREATE_DEFAULT_CONTEXT = ssl.create_default_context
+
+
+def _create_default_context_with_certifi_fallback(*args, **kwargs):
+    try:
+        return _ORIGINAL_CREATE_DEFAULT_CONTEXT(*args, **kwargs)
+    except ssl.SSLError as exc:
+        message = str(exc).lower()
+        if os.name != 'nt' or 'asn1' not in message:
+            raise
+
+        try:
+            import certifi
+        except Exception:
+            print(
+                '[OSINTbot] Windows certificate store failed to load and certifi '
+                'is not installed. Run: python -m pip install certifi',
+                file=sys.stderr,
+            )
+            raise
+
+        patched_kwargs = dict(kwargs)
+        if not any(patched_kwargs.get(key) for key in ('cafile', 'capath', 'cadata')):
+            patched_kwargs['cafile'] = certifi.where()
+
+        print(
+            '[OSINTbot] Warning: Windows certificate store failed to load; '
+            'using certifi CA bundle instead.',
+            file=sys.stderr,
+        )
+        return _ORIGINAL_CREATE_DEFAULT_CONTEXT(*args, **patched_kwargs)
+
+
+ssl.create_default_context = _create_default_context_with_certifi_fallback
 
 import discord
 import requests
 from discord import app_commands
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'osintbot.log')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
+LOG_PATH = os.path.join(BASE_DIR, 'osintbot.log')
 
 
+# ---------------------------------------------------------------------------
+# Logging / config
+# ---------------------------------------------------------------------------
 def configure_logging():
     logger = logging.getLogger('osintbot')
     if logger.handlers:
@@ -54,22 +101,6 @@ def shorten(text, limit=500):
     return f'{cleaned[:limit]}... [truncated {len(cleaned) - limit} chars]'
 
 
-def collect_subprocess_output(result, combine_streams=False):
-    stdout = result.stdout or ''
-    stderr = result.stderr or ''
-
-    if combine_streams:
-        return stdout + stderr
-
-    if result.returncode == 0:
-        return stdout or stderr
-
-    if stdout and stderr:
-        return f'STDOUT:\n{stdout}\nSTDERR:\n{stderr}'
-
-    return stdout or stderr
-
-
 def load_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as config_file:
         config = json.load(config_file)
@@ -92,9 +123,13 @@ except (FileNotFoundError, json.JSONDecodeError, KeyError) as config_error:
     ) from config_error
 
 BOT_TOKEN = config['BOT_TOKEN']
-# Tool paths (portable - supports Linux and Windows)
+
+
+# ---------------------------------------------------------------------------
+# Tool paths
+# ---------------------------------------------------------------------------
 IS_WINDOWS = os.name == 'nt'
-TOOLS_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'osint-tools')
+TOOLS_BASE = os.path.join(BASE_DIR, 'osint-tools')
 if not os.path.exists(TOOLS_BASE):
     TOOLS_BASE = os.path.expanduser('~/osint-tools')
 
@@ -121,22 +156,19 @@ WHOIS_PYTHON = venv_exec('whois', 'whoisvenv', 'python')
 THEHARVESTER_PYTHON = venv_exec('theHarvester', 'theharvestervenv', 'python')
 SUBLIST3R_PYTHON = venv_exec('sublist3r', 'sublist3rvenv', 'python')
 
-# Source-specific finding parsers
 SOURCES_WITH_EMAIL_DETAILS = {'COMB'}
 
-# Configure requests session
 session = requests.Session()
 
-# Setup bot
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 commands_synced = False
 
 
-# ============================================================
-# INPUT VALIDATION
-# ============================================================
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
 def validate_username(username):
     if not username or len(username) > 50:
         return False
@@ -161,9 +193,23 @@ def validate_domain(domain):
     return bool(re.match(r'^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$', domain))
 
 
-# ============================================================
-# HELPERS
-# ============================================================
+# ---------------------------------------------------------------------------
+# Subprocess helpers
+# ---------------------------------------------------------------------------
+def collect_subprocess_output(result, combine_streams=False):
+    stdout = result.stdout or ''
+    stderr = result.stderr or ''
+
+    if combine_streams:
+        return stdout + stderr
+
+    if result.returncode == 0:
+        return stdout or stderr
+
+    if stdout and stderr:
+        return f'STDOUT:\n{stdout}\nSTDERR:\n{stderr}'
+
+    return stdout or stderr
 
 
 def summarize_subprocess_failure(output):
@@ -188,6 +234,16 @@ def summarize_subprocess_failure(output):
     return cleaned[-1]
 
 
+def build_subprocess_env(extra_env=None):
+    proc_env = os.environ.copy()
+    if IS_WINDOWS:
+        proc_env.setdefault('PYTHONUTF8', '1')
+        proc_env.setdefault('PYTHONIOENCODING', 'utf-8')
+    if extra_env:
+        proc_env.update(extra_env)
+    return proc_env
+
+
 async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=None):
     loop = asyncio.get_event_loop()
     logger.info(
@@ -199,13 +255,6 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=
     )
 
     def _run():
-        proc_env = os.environ.copy()
-        if IS_WINDOWS:
-            proc_env.setdefault('PYTHONUTF8', '1')
-            proc_env.setdefault('PYTHONIOENCODING', 'utf-8')
-        if env:
-            proc_env.update(env)
-
         result = subprocess.run(
             command,
             capture_output=True,
@@ -215,7 +264,7 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=
             timeout=timeout,
             cwd=cwd,
             shell=False,
-            env=proc_env
+            env=build_subprocess_env(env)
         )
         output = collect_subprocess_output(result, combine_streams=combine_streams)
 
@@ -265,10 +314,6 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
 
             try:
                 logger.info('Attempting fallback command: %s', command)
-                proc_env = os.environ.copy()
-                if IS_WINDOWS:
-                    proc_env.setdefault('PYTHONUTF8', '1')
-                    proc_env.setdefault('PYTHONIOENCODING', 'utf-8')
                 result = subprocess.run(
                     command,
                     capture_output=True,
@@ -278,7 +323,7 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
                     timeout=timeout,
                     cwd=cwd,
                     shell=False,
-                    env=proc_env
+                    env=build_subprocess_env()
                 )
             except FileNotFoundError:
                 logger.warning('FileNotFoundError while running executable: %s', executable)
@@ -320,8 +365,11 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
     return await loop.run_in_executor(None, _run)
 
 
+# ---------------------------------------------------------------------------
+# Finding parsing / formatting
+# ---------------------------------------------------------------------------
 def normalize_finding(line):
-    clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', str(line))
     clean = re.sub(r'^\s*\[[*+\-]\]\s*', '', clean)
     clean = re.sub(r'^\s*\d+\.\s*', '', clean)
     clean = clean.replace('`', '').strip()
@@ -329,12 +377,90 @@ def normalize_finding(line):
     return clean[:280]
 
 
+def cleanup_url(url):
+    clean = str(url).strip().rstrip(',;')
+    while clean and clean[-1] in '.,;:!?':
+        clean = clean[:-1]
+    return clean
+
+
+SITE_NAME_OVERRIDES = {
+    'chaturbate.com': 'Chaturbate',
+    'deviantart.com': 'DeviantArt',
+    'eros.com': 'Eros',
+    'linktr.ee': 'Linktree',
+    'playboy.com': 'Playboy',
+    'snapchat.com': 'Snapchat',
+    't.me': 'Telegram',
+    'telegram.me': 'Telegram',
+    'tumblr.com': 'Tumblr',
+    'xvideos.com': 'xVideos',
+}
+
+
+def site_name_from_url(url):
+    parsed = urlparse(cleanup_url(url))
+    host = (parsed.netloc or parsed.path.split('/')[0]).lower()
+    if '@' in host:
+        host = host.rsplit('@', 1)[-1]
+    if ':' in host:
+        host = host.split(':', 1)[0]
+    host = host.strip('.')
+    if not host:
+        return None
+
+    host_without_www = re.sub(r'^(?:www|m|mobile)\.', '', host)
+    if host_without_www in SITE_NAME_OVERRIDES:
+        return SITE_NAME_OVERRIDES[host_without_www]
+
+    parts = host_without_www.split('.')
+    if len(parts) >= 2:
+        registrable = '.'.join(parts[-2:])
+        if registrable in SITE_NAME_OVERRIDES:
+            return SITE_NAME_OVERRIDES[registrable]
+        name = parts[-2]
+    else:
+        name = parts[0]
+
+    if not name:
+        return None
+
+    known_style = {
+        'github': 'GitHub',
+        'youtube': 'YouTube',
+        'reddit': 'Reddit',
+        'instagram': 'Instagram',
+        'facebook': 'Facebook',
+        'twitter': 'Twitter/X',
+        'x': 'X',
+        'tiktok': 'TikTok',
+        'linkedin': 'LinkedIn',
+        'pinterest': 'Pinterest',
+        'soundcloud': 'SoundCloud',
+        'steamcommunity': 'SteamCommunity',
+    }
+    return known_style.get(name, name.replace('-', ' ').replace('_', ' ').title())
+
+
 def format_site_finding(site, value):
     site_clean = normalize_finding(site).strip('[]')
-    value_clean = normalize_finding(value).rstrip(',').strip()
+    value_clean = cleanup_url(normalize_finding(value))
     if not site_clean or not value_clean:
         return None
     return f'{site_clean}: {value_clean}'
+
+
+def format_url_finding(url, site=None):
+    url_clean = cleanup_url(url)
+    site_clean = site or site_name_from_url(url_clean)
+    if not site_clean or not url_clean:
+        return None
+    return format_site_finding(site_clean, url_clean)
+
+
+def extract_first_url(text):
+    match = re.search(r'https?://[^\s<>()\]]+', str(text))
+    return cleanup_url(match.group(0)) if match else None
 
 
 MIME_EXTENSIONS = {
@@ -386,7 +512,7 @@ def extract_embedded_images(output, tool_name=None):
 
 
 def escape_for_discord(text):
-    escaped_mentions = discord.utils.escape_mentions(text)
+    escaped_mentions = discord.utils.escape_mentions(str(text))
     escaped_text = discord.utils.escape_markdown(escaped_mentions)
 
     def _suppress_embed_for_url(match):
@@ -401,11 +527,11 @@ def escape_for_discord(text):
 
 
 def line_contains_exact_email(line, query_email):
-    return any(match.lower() == query_email for match in re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', line))
+    return any(match.lower() == query_email for match in re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', str(line)))
 
 
 def extract_primary_email(line):
-    match = re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', line)
+    match = re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', str(line))
     return match.group(0).lower() if match else None
 
 
@@ -434,6 +560,35 @@ def render_finding_for_tool(item, tool_name):
     return base
 
 
+def parse_cupid_finding(raw_clean):
+    # Main cupidcr4wl format:
+    # ↳ Account found on Site: https://example.com/user
+    cupid_match = re.match(
+        r'^↳\s+(?:Possible\s+)?Account\s+found\s+on\s+(.+?):\s*(https?://\S+),?$',
+        raw_clean,
+        flags=re.IGNORECASE
+    )
+    if cupid_match:
+        site, target = cupid_match.groups()
+        return format_site_finding(site, target)
+
+    # Site: URL format.
+    site_url_match = re.match(
+        r'^(?:[-*•↳]\s*)?(?P<site>[A-Za-z0-9][A-Za-z0-9 ._/\-+&]{1,80}):\s*(?P<url>https?://\S+),?$',
+        raw_clean
+    )
+    if site_url_match:
+        return format_site_finding(site_url_match.group('site'), site_url_match.group('url'))
+
+    # Account found: URL / Possible account: URL / plain URL format.
+    url = extract_first_url(raw_clean)
+    if url:
+        # Prefer a label from the URL host over returning a bare URL.
+        return format_url_finding(url)
+
+    return None
+
+
 def extract_findings(output, query, search_type, tool_name=None):
     if not output:
         return []
@@ -445,9 +600,9 @@ def extract_findings(output, query, search_type, tool_name=None):
     query_is_domain = not query_is_email and bool(re.match(r'^(?:[a-z0-9-]+\.)+[a-z]{2,}$', query_l))
     ignored = (
         'searching', 'checking', 'running', 'elapsed', 'timeout', 'api returned status',
-        'no results', 'no breaches found', 'found 0', 'usage:',
-        'results saved', 'module', 'warning', 'error', 'version:', 'github :',
-        'for btc donations', 'found 10000 result(s):'
+        'no results', 'no breaches found', 'found 0', 'usage:', 'results saved',
+        'module', 'warning', 'error', 'version:', 'github :', 'for btc donations',
+        'found 10000 result(s):'
     )
     blackbird_started = False
     pending_blackbird_site = None
@@ -482,7 +637,7 @@ def extract_findings(output, query, search_type, tool_name=None):
                 pending_blackbird_site = None
                 continue
 
-            if 'enumerating accounts with username' in raw_clean.lower() or 'check completed in' in raw_clean.lower():
+            if 'enumerating accounts with username' in lowered or 'check completed in' in lowered:
                 pending_blackbird_site = None
                 continue
 
@@ -508,16 +663,9 @@ def extract_findings(output, query, search_type, tool_name=None):
                 continue
 
         if tool_l == 'cupidcr4wl' and search_type in {'username', 'phone'}:
-            cupid_match = re.match(
-                r'^↳\s+(?:Possible\s+)?Account\s+found\s+on\s+(.+?):\s*(https?://\S+),?$',
-                raw_clean,
-                flags=re.IGNORECASE
-            )
-            if cupid_match:
-                site, target = cupid_match.groups()
-                normalized = format_site_finding(site, target)
-                if normalized:
-                    findings.append(normalized)
+            cupid_finding = parse_cupid_finding(raw_clean)
+            if cupid_finding:
+                findings.append(cupid_finding)
                 continue
 
         if tool_l == 'user-scanner' and search_type in {'username', 'email'}:
@@ -539,11 +687,9 @@ def extract_findings(output, query, search_type, tool_name=None):
                 site = site.strip()
                 site_low = site.lower()
 
-                # Holehe includes legend/output helper lines that are not actual findings.
                 if 'email used' in site_low or 'email not used' in site_low or 'rate limit' in site_low:
                     continue
 
-                # Do not emit the queried email address as a finding.
                 if extract_primary_email(site):
                     continue
 
@@ -577,6 +723,14 @@ def extract_findings(output, query, search_type, tool_name=None):
 
         if search_type in {'username', 'phone'} and not has_query and not is_structured_record:
             continue
+
+        # As a last-resort cleanup, label URL-only username/phone hits rather than
+        # returning bare links.
+        if tool_l == 'cupidcr4wl' and has_url:
+            labeled = format_url_finding(extract_first_url(line))
+            if labeled:
+                findings.append(labeled)
+                continue
 
         if has_query:
             findings.append(line)
@@ -683,9 +837,9 @@ async def send_consolidated_results(interaction, query, aggregated, image_artifa
             )
 
 
-# ============================================================
-# TOOL RUNNERS
-# ============================================================
+# ---------------------------------------------------------------------------
+# Tool runners
+# ---------------------------------------------------------------------------
 async def run_sherlock(username):
     return await run_subprocess(
         [SHERLOCK_PATH, username, '--timeout', '10', '--nsfw', '--no-txt'],
@@ -694,18 +848,20 @@ async def run_sherlock(username):
     )
 
 
+BLACKBIRD_ENV = {
+    'PYTHONUTF8': '1',
+    'PYTHONIOENCODING': 'utf-8',
+    'TERM': 'dumb',
+    'NO_COLOR': '1',
+}
+
+
 async def run_blackbird_username(username):
-    blackbird_env = {
-        'PYTHONUTF8': '1',
-        'PYTHONIOENCODING': 'utf-8',
-        'TERM': 'dumb',
-        'NO_COLOR': '1',
-    }
     return await run_subprocess(
         [BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--username', username],
         timeout=240,
         cwd=BLACKBIRD_DIR,
-        env=blackbird_env
+        env=BLACKBIRD_ENV
     )
 
 
@@ -726,10 +882,10 @@ async def run_breaches(query):
 
     data = response.json()
     if 'lines' in data and data['lines']:
-        result_text = f"Found {data.get('count', len(data['lines']))} result(s):\n\n"
+        result_lines = [f"Found {data.get('count', len(data['lines']))} result(s):", ""]
         for idx, line in enumerate(data['lines'][:100], 1):
-            result_text += f"{idx}. {line}\n"
-        return result_text
+            result_lines.append(f"{idx}. {line}")
+        return '\n'.join(result_lines)
 
     return 'No breaches found in COMB database.'
 
@@ -759,15 +915,15 @@ async def run_infostealer_username(username):
             if not isinstance(stealer, dict):
                 continue
 
+            blob = json.dumps(stealer, ensure_ascii=False).lower()
+            if username_l not in blob:
+                continue
+
             pieces = [f'Record {idx}']
             for key in important_keys:
                 value = stealer.get(key)
                 if isinstance(value, (str, int, float)) and str(value).strip():
                     pieces.append(f'{key}={value}')
-
-            blob = json.dumps(stealer, ensure_ascii=False).lower()
-            if username_l not in blob:
-                continue
 
             lines.append(' | '.join(pieces))
 
@@ -781,7 +937,12 @@ async def run_user_scanner_username(username):
 
 
 async def run_blackbird_email(email):
-    return await run_subprocess([BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--email', email], timeout=240, cwd=BLACKBIRD_DIR)
+    return await run_subprocess(
+        [BLACKBIRD_PYTHON, BLACKBIRD_SCRIPT, '--email', email],
+        timeout=240,
+        cwd=BLACKBIRD_DIR,
+        env=BLACKBIRD_ENV
+    )
 
 
 async def run_holehe(email):
@@ -872,6 +1033,9 @@ async def run_sublist3r(domain):
     )
 
 
+# ---------------------------------------------------------------------------
+# Discord commands
+# ---------------------------------------------------------------------------
 @client.event
 async def on_ready():
     global commands_synced
@@ -882,8 +1046,6 @@ async def on_ready():
         await tree.sync()
         commands_synced = True
         logger.info('Slash commands synced.')
-
-
 
 
 @tree.command(name='help', description='Show /osint usage and sources')
@@ -920,7 +1082,6 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
         interaction.user,
         interaction.user.id
     )
-
 
     if selected_type == 'username' and not validate_username(query):
         await interaction.edit_original_response(content='❌ Invalid username. Use letters, numbers, underscores, hyphens, and periods (max 50 chars).')
@@ -1000,7 +1161,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
 
         except subprocess.TimeoutExpired:
             logger.warning('Timeout running tool=%s search_type=%s query=%s', tool_name, selected_type, query)
-        except Exception as exc:
+        except Exception:
             logger.exception(
                 'Error running tool=%s search_type=%s query=%s user=%s user_id=%s',
                 tool_name,
