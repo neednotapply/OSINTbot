@@ -16,11 +16,11 @@ BOT_DIR="$SCRIPT_DIR"
 TOOLS_DIR="$SCRIPT_DIR/osint-tools"
 
 if command -v apt >/dev/null 2>&1; then
-  echo "[1/7] Updating package metadata..."
+  echo "[1/9] Updating package metadata..."
   sudo apt update
 
   echo ""
-  echo "[2/7] Installing system dependencies..."
+  echo "[2/9] Installing system dependencies..."
   sudo apt install -y \
       python3 \
       python3-pip \
@@ -33,7 +33,7 @@ else
 fi
 
 echo ""
-echo "[3/7] Creating directory structure..."
+echo "[3/9] Creating directory structure..."
 mkdir -p "$BOT_DIR"
 mkdir -p "$TOOLS_DIR"
 
@@ -61,6 +61,7 @@ clone_or_update() {
 
   cd "$TOOLS_DIR"
   if [ -d "$target_dir/.git" ]; then
+    git -C "$target_dir" reset --hard || true
     git -C "$target_dir" pull --ff-only || true
   elif [ -d "$target_dir" ]; then
     echo "[WARN] $TOOLS_DIR/$target_dir exists but is not a git checkout; leaving it in place."
@@ -70,9 +71,12 @@ clone_or_update() {
 }
 
 echo ""
-echo "[4/7] Installing OSINT tools..."
+echo "[4/9] Installing OSINT tools..."
 
 setup_python_tool_dir "Sherlock" "sherlock" "sherlockvenv" sherlock-project
+source "$TOOLS_DIR/sherlock/sherlockvenv/bin/activate"
+python -m pip install --force-reinstall "$BOT_DIR/tool_shims"
+deactivate
 
 clone_or_update "https://github.com/OSINTI4L/cupidcr4wl" "cupidcr4wl"
 echo ""
@@ -106,6 +110,7 @@ python3 -m venv userscannervenv
 source userscannervenv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install user-scanner certifi
+python -m pip install --force-reinstall "$BOT_DIR/tool_shims"
 deactivate
 
 setup_python_tool_dir "whois" "whois" "whoisvenv" python-whois
@@ -113,7 +118,7 @@ setup_python_tool_dir "theHarvester" "theHarvester" "theharvestervenv" theHarves
 setup_python_tool_dir "Sublist3r" "sublist3r" "sublist3rvenv" sublist3r
 
 echo ""
-echo "[5/7] Setting up Discord bot virtual environment..."
+echo "[5/9] Setting up Discord bot virtual environment..."
 cd "$BOT_DIR"
 python3 -m venv discordbotvenv
 source discordbotvenv/bin/activate
@@ -123,11 +128,20 @@ deactivate
 chmod +x "$BOT_DIR/run_bot.sh" || true
 
 echo ""
-echo "[6/7] Installing child-process SSL patch..."
+echo "[6/9] Installing Blackbird wrapper..."
+"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/patch_blackbird.py"
+
+echo ""
+echo "[7/9] Installing child-process SSL patch..."
 "$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/install_tool_ssl_patch.py"
 
 echo ""
-echo "[7/7] Creating systemd service for Discord bot..."
+echo "[8/9] Verifying tool shim entrypoints..."
+"$TOOLS_DIR/sherlock/sherlockvenv/bin/sherlock" test --timeout 3 >/dev/null 2>&1 || true
+"$TOOLS_DIR/user-scanner/userscannervenv/bin/user-scanner" -u test --timeout 3 >/dev/null 2>&1 || true
+
+echo ""
+echo "[9/9] Creating systemd service for Discord bot..."
 
 if command -v systemctl >/dev/null 2>&1; then
   sudo tee /etc/systemd/system/osint-bot.service > /dev/null << EOF
@@ -165,11 +179,11 @@ echo "================================================"
 echo ""
 echo "📁 Directory Structure Created:"
 echo "   $BOT_DIR/discordbotvenv/        (Discord.py environment)"
-echo "   $TOOLS_DIR/sherlock/            (Sherlock + venv)"
+echo "   $TOOLS_DIR/sherlock/            (Sherlock + venv + OSINTbot shim)"
 echo "   $TOOLS_DIR/cupidcr4wl/          (cupidcr4wl + venv)"
-echo "   $TOOLS_DIR/blackbird/           (blackbird + venv)"
+echo "   $TOOLS_DIR/blackbird/           (blackbird + venv + OSINTbot wrapper)"
 echo "   $TOOLS_DIR/holehe/              (holehe + venv)"
-echo "   $TOOLS_DIR/user-scanner/        (user-scanner + venv)"
+echo "   $TOOLS_DIR/user-scanner/        (user-scanner + venv + OSINTbot shim)"
 echo ""
 echo "⚙️  Next Steps:"
 echo "   1. Edit config.json and set BOT_TOKEN"
