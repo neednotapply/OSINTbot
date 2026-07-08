@@ -1,8 +1,9 @@
 """Patch local Blackbird checkout for OSINTbot subprocess use.
 
-Blackbird's update check can fail on Windows and return a non-zero exit code even
-when useful stdout is produced. OSINTbot parses stdout, so this wrapper forces
---no-update and treats Blackbird's SystemExit as success so stdout is preserved.
+Blackbird's update check or local JSON state can fail on Windows and return a
+non-zero exit code even when useful stdout is produced. OSINTbot parses stdout,
+so this wrapper forces --no-update and treats upstream failures as a clean exit
+while keeping the failure detail compact on stderr.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from __future__ import annotations
 import os
 import runpy
 import sys
+import traceback
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPSTREAM = os.path.join(BASE_DIR, 'blackbird_upstream.py')
@@ -43,6 +45,10 @@ except SystemExit as exc:
     if exc.code not in (None, 0):
         print(f'[OSINTbot] Blackbird exited with code {exc.code}; preserving stdout for parser.', file=sys.stderr)
     raise SystemExit(0)
+except Exception as exc:
+    short_trace = ''.join(traceback.format_exception_only(type(exc), exc)).strip()
+    print(f'[OSINTbot] Blackbird suppressed upstream exception: {short_trace}', file=sys.stderr)
+    raise SystemExit(0)
 '''
 
 
@@ -53,7 +59,9 @@ def main() -> int:
 
     current = BLACKBIRD_MAIN.read_text(encoding='utf-8', errors='replace')
     if 'OSINTbot wrapper around upstream Blackbird' in current:
-        print('[OK] Blackbird wrapper already installed.')
+        # Refresh wrapper content in case the wrapper implementation changed.
+        BLACKBIRD_MAIN.write_text(WRAPPER, encoding='utf-8')
+        print('[OK] Blackbird wrapper refreshed.')
         return 0
 
     if BLACKBIRD_UPSTREAM.exists():
