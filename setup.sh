@@ -134,7 +134,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$BOT_DIR
 Environment="PATH=/home/$USER/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$BOT_DIR/discordbotvenv/bin/python $BOT_DIR/run_bot.py
+ExecStart=$BOT_DIR/discordbotvenv/bin/python $BOT_DIR/bot.py
 Restart=always
 RestartSec=10
 StandardOutput=append:$BOT_DIR/osintbot.log
