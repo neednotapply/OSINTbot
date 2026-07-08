@@ -6,14 +6,18 @@ Original bot created by [OSINTI4L](https://github.com/OSINTI4L) (not hosted on G
 ## Commands
 
 - `/osint` — run a search
+- `/osint-status` — check local OSINT tool paths and setup status
 - `/help` — show search options and coverage
 
 `/osint` prompts for:
 - `Search type`: `Username`, `Email`, `Phone`, `Domain`
 - `Query`: the value to search
 
+`/osint-status` can check all configured tools or filter by category. Use it when a source is not appearing in results.
+
 Results are consolidated: if the same finding appears in multiple tools, it is grouped once with all matching sources listed.
 Where possible, URL-style findings are sent as clickable Discord hyperlinks.
+Every `/osint` result includes a **Tool Status** section showing which tools ran, failed, timed out, or returned no parsed findings.
 
 ## Sources
 
@@ -79,6 +83,24 @@ discordbotvenv\Scripts\python.exe bot.py
 
 Do not use bare `py bot.py` or bare `python bot.py` unless you intentionally want to use the global Python environment instead of the repo virtual environment.
 
+## Diagnostics
+
+Run this in Discord after the bot starts:
+
+```text
+/osint-status
+```
+
+Useful filters:
+
+```text
+/osint-status search_type:Username
+/osint-status search_type:Email
+/osint-status search_type:Domain
+```
+
+The command reports expected paths under `osint-tools`, missing executables/scripts, and which setup step should repair each missing local tool.
+
 ## Launchers
 
 - `run_bot.sh` is the Unix launcher for Linux/macOS-style shells. It uses `discordbotvenv/bin/python bot.py` when available, then falls back to `python3` or `python`.
@@ -130,7 +152,8 @@ update_tools.bat
 
 ## Troubleshooting
 
-- **Slash commands not visible**: re-invite bot with `applications.commands` scope.
+- **Slash commands not visible**: re-invite bot with `applications.commands` scope, then restart the bot so slash commands sync.
 - **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
+- **Only some sources appear**: check the **Tool Status** section in `/osint` output, then run `/osint-status`.
 - **Tool errors/timeouts**: check your bot logs and re-run update scripts.
 - **Windows import-time SSL crash**: pull the latest repo changes, run `discordbotvenv\Scripts\python.exe -m pip install -r requirements.txt`, then use `run_bot.bat` instead of `py bot.py`.
