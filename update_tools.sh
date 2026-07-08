@@ -54,6 +54,7 @@ echo "[4/13] Updating holehe..."
 cd "$TOOLS_DIR/holehe" || exit
 source holehevenv/bin/activate
 python -m pip install --upgrade holehe certifi
+python -m pip install --force-reinstall "$BOT_DIR/tool_shims"
 deactivate
 echo "✅ holehe updated"
 echo ""
@@ -121,6 +122,7 @@ echo ""
 
 echo "[13/13] Verifying tool shim entrypoints..."
 "$TOOLS_DIR/sherlock/sherlockvenv/bin/sherlock" test --timeout 3 >/dev/null 2>&1 || true
+"$TOOLS_DIR/holehe/holehevenv/bin/holehe" test@example.com --timeout 3 >/dev/null 2>&1 || true
 "$TOOLS_DIR/user-scanner/userscannervenv/bin/user-scanner" -u test --timeout 3 >/dev/null 2>&1 || true
 echo "✅ Shim verification attempted"
 echo ""
