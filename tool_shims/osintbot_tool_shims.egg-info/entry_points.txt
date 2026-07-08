@@ -1,0 +1,3 @@
+[console_scripts]
+sherlock = osintbot_tool_shims:sherlock_main
+user-scanner = osintbot_tool_shims:user_scanner_main
