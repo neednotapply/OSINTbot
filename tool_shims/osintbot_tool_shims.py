@@ -103,6 +103,17 @@ def email_findings(email: str, timeout: int = DEFAULT_TIMEOUT) -> list[tuple[str
     return findings
 
 
+def email_site_statuses(email: str, timeout: int = DEFAULT_TIMEOUT) -> list[tuple[str, bool]]:
+    email_l = email.strip().lower()
+    digest = hashlib.md5(email_l.encode('utf-8')).hexdigest()
+    statuses: list[tuple[str, bool]] = []
+    for site_name, template in EMAIL_SITES:
+        url = template.format(md5=digest, email=urllib.parse.quote(email_l, safe=''))
+        status, _ = http_status(url, timeout=timeout)
+        statuses.append((site_name, looks_taken(status)))
+    return statuses
+
+
 def first_query_arg(argv: list[str]) -> str | None:
     for arg in argv:
         if arg.startswith('-'):
@@ -151,6 +162,24 @@ def user_scanner_main() -> int:
 
     print('Usage: user-scanner -u USERNAME or -e EMAIL')
     return 2
+
+
+def holehe_main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('email', nargs='?')
+    parser.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT)
+    args, extras = parser.parse_known_args()
+
+    email = args.email or first_query_arg(extras)
+    if not email:
+        print('Usage: holehe EMAIL [--timeout SECONDS]')
+        return 2
+
+    for site_name, is_used in email_site_statuses(email, timeout=args.timeout):
+        marker = '+' if is_used else '-'
+        print(f'[{marker}] {site_name}')
+
+    return 0
 
 
 if __name__ == '__main__':
