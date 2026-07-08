@@ -42,6 +42,7 @@ echo [4/12] Updating holehe...
 cd /d "%TOOLS_DIR%\holehe" || goto :err
 call holehevenv\Scripts\activate.bat
 python -m pip install --upgrade holehe certifi
+python -m pip install --force-reinstall "%BOT_DIR%\tool_shims"
 call deactivate
 
 echo.
@@ -87,6 +88,7 @@ echo [10/12] Installing child-process SSL patch...
 echo.
 echo [11/12] Verifying tool shim entrypoints...
 "%TOOLS_DIR%\sherlock\sherlockvenv\Scripts\sherlock.exe" test --timeout 3 >nul 2>nul
+"%TOOLS_DIR%\holehe\holehevenv\Scripts\holehe.exe" test@example.com --timeout 3 >nul 2>nul
 "%TOOLS_DIR%\user-scanner\userscannervenv\Scripts\user-scanner.exe" -u test --timeout 3 >nul 2>nul
 
 echo.
