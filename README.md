@@ -101,6 +101,12 @@ Useful filters:
 
 The command reports expected paths under `osint-tools`, missing executables/scripts, and which setup step should repair each missing local tool.
 
+### Parser-friendly fallback shims
+
+`setup.bat` and `update_tools.bat` install a small local package from `tool_shims/` into the Sherlock and user-scanner venvs. This replaces brittle Windows entrypoints with parser-friendly commands that emit output formats `bot.py` already understands.
+
+Blackbird is patched by `patch_blackbird.py`. The wrapper preserves upstream Blackbird but adds `--no-update` and exits cleanly so parseable stdout is not discarded when Blackbird's update check fails.
+
 ### Windows child-process SSL repair
 
 If a child OSINT tool fails with:
@@ -177,6 +183,8 @@ update_tools.bat
 - **Slash commands not visible**: re-invite bot with `applications.commands` scope, then restart the bot so slash commands sync.
 - **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
 - **Only some sources appear**: check the **Tool Status** section in `/osint` output, then run `/osint-status`.
+- **Sherlock/user-scanner return code 1 with empty output**: run `update_tools.bat` to reinstall the parser-friendly shims.
+- **Blackbird exits 1 after printing a banner/update error**: run `update_tools.bat` to reinstall the Blackbird wrapper.
 - **Child tool SSL crash**: run `update_tools.bat` so `install_tool_ssl_patch.py` patches every tool venv.
 - **Tool errors/timeouts**: check your bot logs and re-run update scripts.
 - **Windows import-time SSL crash**: pull the latest repo changes, run `discordbotvenv\Scripts\python.exe -m pip install -r requirements.txt`, then use `run_bot.bat` instead of `py bot.py`.
