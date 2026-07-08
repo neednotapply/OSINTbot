@@ -1,8 +1,8 @@
 """Fallback command shims for OSINTbot-managed tool venvs.
 
-These are intentionally small, dependency-light username/email checkers used when
-upstream Windows console entrypoints are brittle or mismatched. They emit formats
-that bot.py already knows how to parse.
+These are intentionally small username/email checkers used when upstream Windows
+console entrypoints are brittle or mismatched. They emit formats that bot.py
+already knows how to parse.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ import argparse
 import concurrent.futures
 import hashlib
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
+
+import certifi
+import requests
 
 USER_AGENT = 'OSINTbot/1.0 (+https://github.com/neednotapply/OSINTbot)'
 DEFAULT_TIMEOUT = 8
@@ -47,13 +48,16 @@ EMAIL_SITES = [
 
 
 def http_status(url: str, timeout: int) -> tuple[int | None, str | None]:
-    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT}, method='GET')
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.getcode(), response.geturl()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.geturl()
-    except Exception as exc:  # network errors are not findings
+        response = requests.get(
+            url,
+            headers={'User-Agent': USER_AGENT},
+            timeout=timeout,
+            allow_redirects=True,
+            verify=certifi.where(),
+        )
+        return response.status_code, response.url
+    except requests.RequestException as exc:
         return None, str(exc)
 
 
@@ -97,6 +101,17 @@ def email_findings(email: str, timeout: int = DEFAULT_TIMEOUT) -> list[tuple[str
         if looks_taken(status):
             findings.append((site_name, final_url if final_url and final_url.startswith('http') else url))
     return findings
+
+
+def email_site_statuses(email: str, timeout: int = DEFAULT_TIMEOUT) -> list[tuple[str, bool]]:
+    email_l = email.strip().lower()
+    digest = hashlib.md5(email_l.encode('utf-8')).hexdigest()
+    statuses: list[tuple[str, bool]] = []
+    for site_name, template in EMAIL_SITES:
+        url = template.format(md5=digest, email=urllib.parse.quote(email_l, safe=''))
+        status, _ = http_status(url, timeout=timeout)
+        statuses.append((site_name, looks_taken(status)))
+    return statuses
 
 
 def first_query_arg(argv: list[str]) -> str | None:
@@ -147,6 +162,24 @@ def user_scanner_main() -> int:
 
     print('Usage: user-scanner -u USERNAME or -e EMAIL')
     return 2
+
+
+def holehe_main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('email', nargs='?')
+    parser.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT)
+    args, extras = parser.parse_known_args()
+
+    email = args.email or first_query_arg(extras)
+    if not email:
+        print('Usage: holehe EMAIL [--timeout SECONDS]')
+        return 2
+
+    for site_name, is_used in email_site_statuses(email, timeout=args.timeout):
+        marker = '+' if is_used else '-'
+        print(f'[{marker}] {site_name}')
+
+    return 0
 
 
 if __name__ == '__main__':

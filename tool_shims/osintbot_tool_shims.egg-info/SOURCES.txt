@@ -4,4 +4,5 @@ osintbot_tool_shims.egg-info/PKG-INFO
 osintbot_tool_shims.egg-info/SOURCES.txt
 osintbot_tool_shims.egg-info/dependency_links.txt
 osintbot_tool_shims.egg-info/entry_points.txt
+osintbot_tool_shims.egg-info/requires.txt
 osintbot_tool_shims.egg-info/top_level.txt

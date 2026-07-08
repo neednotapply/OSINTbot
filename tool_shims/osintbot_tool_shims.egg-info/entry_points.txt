@@ -1,3 +1,4 @@
 [console_scripts]
+holehe = osintbot_tool_shims:holehe_main
 sherlock = osintbot_tool_shims:sherlock_main
 user-scanner = osintbot_tool_shims:user_scanner_main
