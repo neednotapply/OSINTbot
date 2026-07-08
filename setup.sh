@@ -16,11 +16,11 @@ BOT_DIR="$SCRIPT_DIR"
 TOOLS_DIR="$SCRIPT_DIR/osint-tools"
 
 if command -v apt >/dev/null 2>&1; then
-  echo "[1/6] Updating package metadata..."
+  echo "[1/7] Updating package metadata..."
   sudo apt update
 
   echo ""
-  echo "[2/6] Installing system dependencies..."
+  echo "[2/7] Installing system dependencies..."
   sudo apt install -y \
       python3 \
       python3-pip \
@@ -33,7 +33,7 @@ else
 fi
 
 echo ""
-echo "[3/6] Creating directory structure..."
+echo "[3/7] Creating directory structure..."
 mkdir -p "$BOT_DIR"
 mkdir -p "$TOOLS_DIR"
 
@@ -51,7 +51,7 @@ setup_python_tool_dir() {
   # shellcheck disable=SC1090
   source "$venv_name/bin/activate"
   python -m pip install --upgrade pip
-  python -m pip install "$@"
+  python -m pip install "$@" certifi
   deactivate
 }
 
@@ -70,7 +70,7 @@ clone_or_update() {
 }
 
 echo ""
-echo "[4/6] Installing OSINT tools..."
+echo "[4/7] Installing OSINT tools..."
 
 setup_python_tool_dir "Sherlock" "sherlock" "sherlockvenv" sherlock-project
 
@@ -82,6 +82,7 @@ python3 -m venv cupidcr4wlvenv
 source cupidcr4wlvenv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m pip install --upgrade certifi
 deactivate
 
 clone_or_update "https://github.com/p1ngul1n0/blackbird" "blackbird"
@@ -92,6 +93,7 @@ python3 -m venv blackbirdvenv
 source blackbirdvenv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m pip install --upgrade certifi
 deactivate
 
 setup_python_tool_dir "holehe" "holehe" "holehevenv" holehe
@@ -103,7 +105,7 @@ cd "$TOOLS_DIR/user-scanner"
 python3 -m venv userscannervenv
 source userscannervenv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install user-scanner
+python -m pip install user-scanner certifi
 deactivate
 
 setup_python_tool_dir "whois" "whois" "whoisvenv" python-whois
@@ -111,7 +113,7 @@ setup_python_tool_dir "theHarvester" "theHarvester" "theharvestervenv" theHarves
 setup_python_tool_dir "Sublist3r" "sublist3r" "sublist3rvenv" sublist3r
 
 echo ""
-echo "[5/6] Setting up Discord bot virtual environment..."
+echo "[5/7] Setting up Discord bot virtual environment..."
 cd "$BOT_DIR"
 python3 -m venv discordbotvenv
 source discordbotvenv/bin/activate
@@ -121,7 +123,11 @@ deactivate
 chmod +x "$BOT_DIR/run_bot.sh" || true
 
 echo ""
-echo "[6/6] Creating systemd service for Discord bot..."
+echo "[6/7] Installing child-process SSL patch..."
+"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/install_tool_ssl_patch.py"
+
+echo ""
+echo "[7/7] Creating systemd service for Discord bot..."
 
 if command -v systemctl >/dev/null 2>&1; then
   sudo tee /etc/systemd/system/osint-bot.service > /dev/null << EOF
