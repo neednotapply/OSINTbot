@@ -234,6 +234,55 @@ def summarize_subprocess_failure(output):
     return cleaned[-1]
 
 
+def output_looks_like_tool_failure(output):
+    if not output:
+        return False
+
+    lowered = str(output).lower()
+    failure_tokens = (
+        'unable to run command',
+        'missing executable',
+        'return code:',
+        'traceback (most recent call last)',
+        'filenotfounderror',
+        'not recognized as an internal or external command',
+        'no such file or directory',
+        'permission denied',
+        'module not found',
+        'modulenotfounderror',
+        'importerror',
+    )
+    return any(token in lowered for token in failure_tokens)
+
+
+def classify_tool_run(output, findings_count):
+    if output_looks_like_tool_failure(output):
+        return 'error', summarize_subprocess_failure(output)
+
+    if findings_count > 0:
+        return 'ok', f'{findings_count} parsed finding(s)'
+
+    if not output or not str(output).strip():
+        return 'warning', 'ran but produced no output'
+
+    return 'no_findings', 'ran, but no parsed findings'
+
+
+def render_tool_status_line(status):
+    icon_by_status = {
+        'ok': '✅',
+        'no_findings': '○',
+        'warning': '⚠️',
+        'error': '❌',
+        'timeout': '⏱️',
+    }
+    icon = icon_by_status.get(status.get('status'), '•')
+    detail = status.get('detail') or ''
+    if detail:
+        return f"{icon} **{escape_for_discord(status['tool'])}** — {escape_for_discord(detail)}"
+    return f"{icon} **{escape_for_discord(status['tool'])}**"
+
+
 def build_subprocess_env(extra_env=None):
     proc_env = os.environ.copy()
     if IS_WINDOWS:
@@ -282,6 +331,10 @@ async def run_subprocess(command, timeout, cwd=None, combine_streams=False, env=
                 result.returncode,
                 summarize_subprocess_failure(output),
                 shorten(output, limit=900)
+            )
+            return (
+                f"Unable to run command successfully. Command: {command}. "
+                f"Return code: {result.returncode}. Output: {shorten(output, limit=900)}"
             )
         return output
 
@@ -363,6 +416,182 @@ async def run_subprocess_with_fallback(commands, timeout, cwd=None, combine_stre
         )
 
     return await loop.run_in_executor(None, _run)
+
+
+# ---------------------------------------------------------------------------
+# Tool setup / health checks
+# ---------------------------------------------------------------------------
+def check_path_exists(path, kind='file'):
+    if kind == 'dir':
+        return os.path.isdir(path)
+    return os.path.exists(path)
+
+
+def check_executable(path_or_command):
+    if os.path.isabs(path_or_command) or os.sep in path_or_command or (os.altsep and os.altsep in path_or_command):
+        return os.path.exists(path_or_command)
+    return shutil.which(path_or_command) is not None
+
+
+def tool_health_definitions():
+    return [
+        {
+            'name': 'Sherlock',
+            'search_types': ['username'],
+            'checks': [('exec', 'sherlock executable', SHERLOCK_PATH)],
+            'repair': 'setup.bat step [1/9] or setup.sh Sherlock section',
+        },
+        {
+            'name': 'Blackbird',
+            'search_types': ['username', 'email'],
+            'checks': [
+                ('exec', 'blackbird venv python', BLACKBIRD_PYTHON),
+                ('file', 'blackbird.py', BLACKBIRD_SCRIPT),
+                ('dir', 'blackbird checkout', BLACKBIRD_DIR),
+            ],
+            'repair': 'setup.bat step [3/9] or setup.sh blackbird section',
+        },
+        {
+            'name': 'cupidcr4wl',
+            'search_types': ['username', 'phone'],
+            'checks': [
+                ('exec', 'cupidcr4wl venv python', CUPID_PYTHON),
+                ('file', 'cc.py', CUPID_SCRIPT),
+                ('dir', 'cupidcr4wl checkout', CUPID_DIR),
+            ],
+            'repair': 'setup.bat step [2/9] or setup.sh cupidcr4wl section',
+        },
+        {
+            'name': 'Holehe',
+            'search_types': ['email'],
+            'checks': [('exec', 'holehe executable', HOLEHE_PATH)],
+            'repair': 'setup.bat step [4/9] or setup.sh holehe section',
+        },
+        {
+            'name': 'user-scanner',
+            'search_types': ['username', 'email'],
+            'checks': [('exec', 'user-scanner executable', USER_SCANNER_PATH)],
+            'repair': 'setup.bat step [5/9] or setup.sh user-scanner section',
+        },
+        {
+            'name': 'whois',
+            'search_types': ['domain'],
+            'checks': [('exec', 'whois venv python', WHOIS_PYTHON)],
+            'optional_checks': [('exec', 'whois command', WHOIS_CMD)],
+            'repair': 'setup.bat step [6/9] or setup.sh whois section',
+        },
+        {
+            'name': 'theHarvester',
+            'search_types': ['domain'],
+            'checks': [('exec', 'theHarvester venv python', THEHARVESTER_PYTHON)],
+            'optional_checks': [('exec', 'theHarvester command', THEHARVESTER_CMD)],
+            'repair': 'setup.bat step [7/9] or setup.sh theHarvester section',
+        },
+        {
+            'name': 'Sublist3r',
+            'search_types': ['domain'],
+            'checks': [('exec', 'Sublist3r venv python', SUBLIST3R_PYTHON)],
+            'optional_checks': [('exec', 'sublist3r command', SUBLIST3R_CMD)],
+            'repair': 'setup.bat step [8/9] or setup.sh Sublist3r section',
+        },
+        {
+            'name': 'COMB',
+            'search_types': ['username', 'email'],
+            'api': 'https://api.proxynova.com/comb',
+        },
+        {
+            'name': 'InfoStealer',
+            'search_types': ['username', 'email'],
+            'api': 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/',
+        },
+    ]
+
+
+def evaluate_tool_health(tool_def):
+    if 'api' in tool_def:
+        return {
+            'name': tool_def['name'],
+            'status': 'api',
+            'details': [f"remote API checked at query time: {tool_def['api']}"],
+            'ok': True,
+        }
+
+    details = []
+    ok = True
+    for check_type, label, target in tool_def.get('checks', []):
+        if check_type == 'exec':
+            passed = check_executable(target)
+        else:
+            passed = check_path_exists(target, kind=check_type)
+
+        ok = ok and passed
+        status = 'OK' if passed else 'MISSING'
+        details.append(f'{status}: {label} -> {target}')
+
+    for check_type, label, target in tool_def.get('optional_checks', []):
+        if check_type == 'exec':
+            passed = check_executable(target)
+        else:
+            passed = check_path_exists(target, kind=check_type)
+        status = 'OK' if passed else 'optional missing'
+        details.append(f'{status}: {label} -> {target}')
+
+    if not ok and tool_def.get('repair'):
+        details.append(f"repair: {tool_def['repair']}")
+
+    return {
+        'name': tool_def['name'],
+        'status': 'ok' if ok else 'missing',
+        'details': details,
+        'ok': ok,
+    }
+
+
+def build_tool_health_report(search_type=None):
+    lines = [
+        '## OSINTbot Tool Status',
+        f'Base dir: `{escape_for_discord(BASE_DIR)}`',
+        f'Tools dir: `{escape_for_discord(TOOLS_BASE)}`',
+    ]
+
+    defs = tool_health_definitions()
+    if search_type:
+        defs = [tool_def for tool_def in defs if search_type in tool_def.get('search_types', [])]
+        lines.append(f'Filter: `{escape_for_discord(search_type)}`')
+
+    lines.append('')
+
+    for tool_def in defs:
+        health = evaluate_tool_health(tool_def)
+        if health['status'] == 'api':
+            icon = '🌐'
+        elif health['ok']:
+            icon = '✅'
+        else:
+            icon = '❌'
+        search_types = ', '.join(tool_def.get('search_types', []))
+        lines.append(f"{icon} **{escape_for_discord(tool_def['name'])}** ({escape_for_discord(search_types)})")
+        for detail in health['details']:
+            lines.append(f"  - {escape_for_discord(detail)}")
+
+    return lines
+
+
+def chunk_lines(lines, limit=1800):
+    chunks = []
+    chunk = ''
+    for line in lines:
+        candidate = (chunk + '\n' + line).strip()
+        if len(candidate) > limit:
+            if chunk:
+                chunks.append(chunk)
+            chunk = line
+        else:
+            chunk = candidate
+
+    if chunk:
+        chunks.append(chunk)
+    return chunks or ['']
 
 
 # ---------------------------------------------------------------------------
@@ -752,15 +981,8 @@ def extract_findings(output, query, search_type, tool_name=None):
     return findings
 
 
-async def send_consolidated_results(interaction, query, aggregated, image_artifacts=None):
+async def send_consolidated_results(interaction, query, aggregated, image_artifacts=None, tool_statuses=None):
     query_header = f"\n`{escape_for_discord(query)}`"
-
-    if not aggregated:
-        logger.info('No consolidated findings query=%s user_id=%s', query, interaction.user.id)
-        await interaction.edit_original_response(
-            content=f"{query_header}\n\n✅ No consolidated findings across selected sources."
-        )
-        return
 
     by_source = {}
     multi_source = []
@@ -774,6 +996,11 @@ async def send_consolidated_results(interaction, query, aggregated, image_artifa
             by_source.setdefault(tool, []).append(item)
 
     lines = [query_header]
+
+    if not aggregated:
+        logger.info('No consolidated findings query=%s user_id=%s', query, interaction.user.id)
+        lines.append('')
+        lines.append('✅ No consolidated findings across selected sources.')
 
     if multi_source:
         lines.append('## Found on Multiple Sources')
@@ -799,30 +1026,21 @@ async def send_consolidated_results(interaction, query, aggregated, image_artifa
         for key in sorted(unique_items, key=str.lower):
             lines.append(render_finding_for_tool(unique_items[key], tool))
 
-    chunks = []
-    chunk = ''
-    for line in lines:
-        candidate = (chunk + '\n' + line).strip()
-        if len(candidate) > 1800:
-            if chunk:
-                chunks.append(chunk)
-            chunk = line
-        else:
-            chunk = candidate
+    if tool_statuses:
+        lines.append('## Tool Status')
+        for status in tool_statuses:
+            lines.append(render_tool_status_line(status))
 
-    if chunk:
-        chunks.append(chunk)
-
-    if not chunks:
-        chunks = [f"{query_header}\n\n✅ No consolidated findings across selected sources."]
+    chunks = chunk_lines(lines, limit=1800)
 
     await interaction.edit_original_response(content=chunks[0])
     logger.info(
-        'Sending consolidated results query=%s user_id=%s findings=%s chunks=%s',
+        'Sending consolidated results query=%s user_id=%s findings=%s chunks=%s statuses=%s',
         query,
         interaction.user.id,
         len(aggregated),
-        len(chunks)
+        len(chunks),
+        len(tool_statuses or [])
     )
 
     for extra_chunk in chunks[1:]:
@@ -1053,14 +1271,37 @@ async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         '## OSINTbot Help\n\n'
         '**Main command:** `/osint`\n'
+        '**Status command:** `/osint-status`\n'
         '**Search type options:** Username, Email, Phone, Domain\n\n'
         '**Sources:**\n'
         '- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, InfoStealer, user-scanner\n'
         '- **Email**: Blackbird, Holehe, COMB, InfoStealer, user-scanner\n'
         '- **Phone**: cupidcr4wl\n'
         '- **Domain**: whois, theHarvester, Sublist3r\n\n'
-        'Results are consolidated so identical findings from multiple tools are grouped with source attribution.'
+        'Results are consolidated so identical findings from multiple tools are grouped with source attribution. '
+        'Each `/osint` result now includes a Tool Status section showing which tools ran, failed, timed out, or returned no parsed findings.'
     )
+
+
+@tree.command(name='osint-status', description='Check configured OSINT tool paths and setup status')
+@app_commands.describe(search_type='Optional category filter')
+@app_commands.choices(search_type=[
+    app_commands.Choice(name='All', value='all'),
+    app_commands.Choice(name='Username', value='username'),
+    app_commands.Choice(name='Email', value='email'),
+    app_commands.Choice(name='Phone', value='phone'),
+    app_commands.Choice(name='Domain', value='domain'),
+])
+async def osint_status(interaction: discord.Interaction, search_type: app_commands.Choice[str] = None):
+    selected_type = None
+    if search_type and search_type.value != 'all':
+        selected_type = search_type.value
+
+    lines = build_tool_health_report(selected_type)
+    chunks = chunk_lines(lines, limit=1800)
+    await interaction.response.send_message(chunks[0])
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk)
 
 
 @tree.command(name='osint', description='Run an OSINT search by category')
@@ -1122,6 +1363,8 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
 
     aggregated = {}
     image_artifacts = []
+    tool_statuses = []
+
     for tool_name, tool_func in tools:
         try:
             logger.info('Starting tool=%s search_type=%s query=%s', tool_name, selected_type, query)
@@ -1137,7 +1380,10 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
             if extracted_images:
                 findings.append(f"Embedded image decoded ({len(extracted_images)})")
 
-            logger.info('Tool completed tool=%s findings=%s query=%s images=%s', tool_name, len(findings), query, len(extracted_images))
+            status, detail = classify_tool_run(output, len(findings))
+            tool_statuses.append({'tool': tool_name, 'status': status, 'detail': detail})
+
+            logger.info('Tool completed tool=%s findings=%s status=%s query=%s images=%s', tool_name, len(findings), status, query, len(extracted_images))
             for finding in findings:
                 aggregate_text = finding
                 aggregate_key = finding.lower()
@@ -1161,7 +1407,8 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
 
         except subprocess.TimeoutExpired:
             logger.warning('Timeout running tool=%s search_type=%s query=%s', tool_name, selected_type, query)
-        except Exception:
+            tool_statuses.append({'tool': tool_name, 'status': 'timeout', 'detail': 'timed out'})
+        except Exception as exc:
             logger.exception(
                 'Error running tool=%s search_type=%s query=%s user=%s user_id=%s',
                 tool_name,
@@ -1170,15 +1417,17 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
                 interaction.user,
                 interaction.user.id
             )
+            tool_statuses.append({'tool': tool_name, 'status': 'error', 'detail': f'{type(exc).__name__}: {exc}'})
 
     logger.info(
-        'Finished /osint request type=%s query=%s user_id=%s aggregated_findings=%s',
+        'Finished /osint request type=%s query=%s user_id=%s aggregated_findings=%s tool_statuses=%s',
         selected_type,
         query,
         interaction.user.id,
-        len(aggregated)
+        len(aggregated),
+        len(tool_statuses)
     )
-    await send_consolidated_results(interaction, query, aggregated, image_artifacts=image_artifacts)
+    await send_consolidated_results(interaction, query, aggregated, image_artifacts=image_artifacts, tool_statuses=tool_statuses)
 
 
 logger.info('Starting bot... logs at %s level=%s', LOG_PATH, logging.getLevelName(logger.level))
