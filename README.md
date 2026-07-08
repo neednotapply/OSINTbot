@@ -101,6 +101,28 @@ Useful filters:
 
 The command reports expected paths under `osint-tools`, missing executables/scripts, and which setup step should repair each missing local tool.
 
+### Windows child-process SSL repair
+
+If a child OSINT tool fails with:
+
+```text
+ssl.SSLError: [ASN1] nested asn1 error
+```
+
+run:
+
+```bat
+update_tools.bat
+```
+
+That installs/updates `certifi` in each tool venv and runs:
+
+```bat
+discordbotvenv\Scripts\python.exe install_tool_ssl_patch.py
+```
+
+The patch writes `sitecustomize.py` into each expected venv's `site-packages` directory so child tools like Blackbird get the same certificate fallback that `bot.py` uses.
+
 ## Launchers
 
 - `run_bot.sh` is the Unix launcher for Linux/macOS-style shells. It uses `discordbotvenv/bin/python bot.py` when available, then falls back to `python3` or `python`.
@@ -155,5 +177,6 @@ update_tools.bat
 - **Slash commands not visible**: re-invite bot with `applications.commands` scope, then restart the bot so slash commands sync.
 - **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
 - **Only some sources appear**: check the **Tool Status** section in `/osint` output, then run `/osint-status`.
+- **Child tool SSL crash**: run `update_tools.bat` so `install_tool_ssl_patch.py` patches every tool venv.
 - **Tool errors/timeouts**: check your bot logs and re-run update scripts.
 - **Windows import-time SSL crash**: pull the latest repo changes, run `discordbotvenv\Scripts\python.exe -m pip install -r requirements.txt`, then use `run_bot.bat` instead of `py bot.py`.
