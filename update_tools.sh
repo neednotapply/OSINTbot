@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # OSINT Discord Bot - Tool Update Script
 # Updates all OSINT tools to their latest versions
 
-set -e  # Exit on any error
+set -euo pipefail
 
 echo "================================================"
 echo "  OSINT Tool Update Script"
@@ -15,89 +15,99 @@ BOT_DIR="$SCRIPT_DIR"
 TOOLS_DIR="$SCRIPT_DIR/osint-tools"
 
 # Stop the bot before updating
-echo "[0/7] Stopping Discord bot..."
+echo "[0/11] Stopping Discord bot..."
 sudo systemctl stop osint-bot 2>/dev/null && echo "✅ Bot stopped" || echo "ℹ️  Bot was not running"
 echo ""
 
-echo "[1/7] Updating Sherlock..."
+echo "[1/11] Updating Sherlock..."
 cd "$TOOLS_DIR/sherlock" || exit
 source sherlockvenv/bin/activate
-python -m pip install --upgrade sherlock-project
+python -m pip install --upgrade sherlock-project certifi
 deactivate
 echo "✅ Sherlock updated"
 echo ""
 
-echo "[2/7] Updating cupidcr4wl..."
+echo "[2/11] Updating cupidcr4wl..."
 cd "$TOOLS_DIR/cupidcr4wl" || exit
 git pull origin main
 source cupidcr4wlvenv/bin/activate
 python -m pip install --upgrade -r requirements.txt
+python -m pip install --upgrade certifi
 deactivate
 echo "✅ cupidcr4wl updated"
 echo ""
 
-echo "[3/7] Updating blackbird..."
+echo "[3/11] Updating blackbird..."
 cd "$TOOLS_DIR/blackbird" || exit
 git pull origin main
 source blackbirdvenv/bin/activate
 python -m pip install --upgrade -r requirements.txt
+python -m pip install --upgrade certifi
 deactivate
 echo "✅ blackbird updated"
 echo ""
 
-echo "[4/7] Updating holehe..."
+echo "[4/11] Updating holehe..."
 cd "$TOOLS_DIR/holehe" || exit
 source holehevenv/bin/activate
-python -m pip install --upgrade holehe
+python -m pip install --upgrade holehe certifi
 deactivate
 echo "✅ holehe updated"
 echo ""
 
-echo "[5/7] Updating user-scanner..."
+echo "[5/11] Updating user-scanner..."
 cd "$TOOLS_DIR/user-scanner" || exit
 source userscannervenv/bin/activate
-python -m pip install --upgrade user-scanner
+python -m pip install --upgrade user-scanner certifi
 deactivate
 echo "✅ user-scanner updated"
 echo ""
 
-
-
-echo "[6/10] Updating whois (venv)..."
+echo "[6/11] Updating whois (venv)..."
 cd "$TOOLS_DIR/whois" || exit
 source whoisvenv/bin/activate
-python -m pip install --upgrade python-whois
+python -m pip install --upgrade python-whois certifi
 deactivate
 echo "✅ whois updated"
 echo ""
 
-echo "[7/10] Updating theHarvester (venv)..."
+echo "[7/11] Updating theHarvester (venv)..."
 cd "$TOOLS_DIR/theHarvester" || exit
 source theharvestervenv/bin/activate
-python -m pip install --upgrade theHarvester
+python -m pip install --upgrade theHarvester certifi
 deactivate
 echo "✅ theHarvester updated"
 echo ""
 
-echo "[8/10] Updating Sublist3r (venv)..."
+echo "[8/11] Updating Sublist3r (venv)..."
 cd "$TOOLS_DIR/sublist3r" || exit
 source sublist3rvenv/bin/activate
-python -m pip install --upgrade sublist3r
+python -m pip install --upgrade sublist3r certifi
 deactivate
 echo "✅ Sublist3r updated"
 echo ""
-echo "[9/10] Updating system tools (whois, theHarvester, sublist3r)..."
-sudo apt update
-sudo apt upgrade -y whois sublist3r theHarvester
-echo "✅ System tools updated"
+
+if command -v apt >/dev/null 2>&1; then
+  echo "[9/11] Updating system tools (whois, theHarvester, sublist3r)..."
+  sudo apt update
+  sudo apt upgrade -y whois sublist3r theHarvester || true
+  echo "✅ System tool update attempted"
+else
+  echo "[9/11] apt not found; skipping system package updates."
+fi
 echo ""
 
-echo "[10/10] Updating Discord bot dependencies..."
+echo "[10/11] Updating Discord bot dependencies..."
 cd "$BOT_DIR" || exit
 source discordbotvenv/bin/activate
-python -m pip install --upgrade discord.py requests
+python -m pip install --upgrade -r requirements.txt
 deactivate
 echo "✅ Bot dependencies updated"
+echo ""
+
+echo "[11/11] Installing child-process SSL patch..."
+"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/install_tool_ssl_patch.py"
+echo "✅ SSL patch installed"
 echo ""
 
 echo "================================================"
