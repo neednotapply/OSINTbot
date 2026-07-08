@@ -1,8 +1,8 @@
 """Fallback command shims for OSINTbot-managed tool venvs.
 
-These are intentionally small, dependency-light username/email checkers used when
-upstream Windows console entrypoints are brittle or mismatched. They emit formats
-that bot.py already knows how to parse.
+These are intentionally small username/email checkers used when upstream Windows
+console entrypoints are brittle or mismatched. They emit formats that bot.py
+already knows how to parse.
 """
 
 from __future__ import annotations
@@ -10,15 +10,14 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hashlib
-import ssl
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
+
+import certifi
+import requests
 
 USER_AGENT = 'OSINTbot/1.0 (+https://github.com/neednotapply/OSINTbot)'
 DEFAULT_TIMEOUT = 8
-_SSL_CONTEXT = None
 
 USERNAME_SITES = [
     ('GitHub', 'https://github.com/{username}'),
@@ -48,32 +47,17 @@ EMAIL_SITES = [
 ]
 
 
-def https_context():
-    """Return an HTTPS context that avoids the broken Windows cert store path."""
-    global _SSL_CONTEXT
-    if _SSL_CONTEXT is not None:
-        return _SSL_CONTEXT
-
-    try:
-        import certifi
-
-        _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        # Fall back to Python defaults. The caller will treat SSL failures as
-        # non-findings rather than crashing the command.
-        _SSL_CONTEXT = ssl.create_default_context()
-
-    return _SSL_CONTEXT
-
-
 def http_status(url: str, timeout: int) -> tuple[int | None, str | None]:
-    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT}, method='GET')
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=https_context()) as response:
-            return response.getcode(), response.geturl()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.geturl()
-    except Exception as exc:  # network errors are not findings
+        response = requests.get(
+            url,
+            headers={'User-Agent': USER_AGENT},
+            timeout=timeout,
+            allow_redirects=True,
+            verify=certifi.where(),
+        )
+        return response.status_code, response.url
+    except requests.RequestException as exc:
         return None, str(exc)
 
 
