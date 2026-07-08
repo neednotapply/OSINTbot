@@ -101,6 +101,9 @@ python -m pip install --upgrade certifi
 deactivate
 
 setup_python_tool_dir "holehe" "holehe" "holehevenv" holehe
+source "$TOOLS_DIR/holehe/holehevenv/bin/activate"
+python -m pip install --force-reinstall "$BOT_DIR/tool_shims"
+deactivate
 
 clone_or_update "https://github.com/mishakorzik/UserFinder" "user-scanner"
 echo ""
@@ -138,6 +141,7 @@ echo "[7/9] Installing child-process SSL patch..."
 echo ""
 echo "[8/9] Verifying tool shim entrypoints..."
 "$TOOLS_DIR/sherlock/sherlockvenv/bin/sherlock" test --timeout 3 >/dev/null 2>&1 || true
+"$TOOLS_DIR/holehe/holehevenv/bin/holehe" test@example.com --timeout 3 >/dev/null 2>&1 || true
 "$TOOLS_DIR/user-scanner/userscannervenv/bin/user-scanner" -u test --timeout 3 >/dev/null 2>&1 || true
 
 echo ""
@@ -182,7 +186,7 @@ echo "   $BOT_DIR/discordbotvenv/        (Discord.py environment)"
 echo "   $TOOLS_DIR/sherlock/            (Sherlock + venv + OSINTbot shim)"
 echo "   $TOOLS_DIR/cupidcr4wl/          (cupidcr4wl + venv)"
 echo "   $TOOLS_DIR/blackbird/           (blackbird + venv + OSINTbot wrapper)"
-echo "   $TOOLS_DIR/holehe/              (holehe + venv)"
+echo "   $TOOLS_DIR/holehe/              (holehe + venv + OSINTbot shim)"
 echo "   $TOOLS_DIR/user-scanner/        (user-scanner + venv + OSINTbot shim)"
 echo ""
 echo "⚙️  Next Steps:"
