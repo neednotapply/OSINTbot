@@ -249,6 +249,7 @@ def output_looks_like_tool_failure(output):
         'no such file or directory',
         'permission denied',
         'module not found',
+        'no module named',
         'modulenotfounderror',
         'importerror',
     )
@@ -256,11 +257,11 @@ def output_looks_like_tool_failure(output):
 
 
 def classify_tool_run(output, findings_count):
-    if output_looks_like_tool_failure(output):
-        return 'error', summarize_subprocess_failure(output)
-
     if findings_count > 0:
         return 'ok', f'{findings_count} parsed finding(s)'
+
+    if output_looks_like_tool_failure(output):
+        return 'error', summarize_subprocess_failure(output)
 
     if not output or not str(output).strip():
         return 'warning', 'ran but produced no output'
@@ -474,18 +475,18 @@ def tool_health_definitions():
             'repair': 'setup.bat step [5/9] or setup.sh user-scanner section',
         },
         {
-            'name': 'whois',
+            'name': 'WHOIS',
             'search_types': ['domain'],
             'checks': [('exec', 'whois venv python', WHOIS_PYTHON)],
             'optional_checks': [('exec', 'whois command', WHOIS_CMD)],
             'repair': 'setup.bat step [6/9] or setup.sh whois section',
         },
         {
-            'name': 'theHarvester',
+            'name': 'DNS Probe',
             'search_types': ['domain'],
             'checks': [('exec', 'theHarvester venv python', THEHARVESTER_PYTHON)],
             'optional_checks': [('exec', 'theHarvester command', THEHARVESTER_CMD)],
-            'repair': 'setup.bat step [7/9] or setup.sh theHarvester section',
+            'repair': 'built in; run update_tools.bat to refresh bot dependencies',
         },
         {
             'name': 'Sublist3r',
@@ -833,6 +834,15 @@ def extract_findings(output, query, search_type, tool_name=None):
     if not output:
         return []
 
+    if output_looks_like_tool_failure(output):
+        logger.info(
+            'Skipping finding parsing because tool output looks like failure tool=%s search_type=%s query=%s',
+            tool_name,
+            search_type,
+            query,
+        )
+        return []
+
     findings = []
     query_l = query.lower()
     tool_l = (tool_name or '').lower()
@@ -842,7 +852,8 @@ def extract_findings(output, query, search_type, tool_name=None):
         'searching', 'checking', 'running', 'elapsed', 'timeout', 'api returned status',
         'no results', 'no breaches found', 'found 0', 'usage:', 'results saved',
         'module', 'warning', 'error', 'version:', 'github :', 'for btc donations',
-        'found 10000 result(s):'
+        'found 10000 result(s):', 'lookup failed', 'unable to', 'not installed',
+        'no whois results', 'no dns probe results'
     )
     blackbird_started = False
     pending_blackbird_site = None
@@ -1121,6 +1132,7 @@ async def run_breaches(query):
 
 
 
+
 HUDSONROCK_DISPLAY_NAME = 'HudsonRock Intel'
 HUDSONROCK_API_BASE = 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools'
 HUDSONROCK_ENDPOINTS = {
@@ -1128,8 +1140,8 @@ HUDSONROCK_ENDPOINTS = {
     'email': [f'{HUDSONROCK_API_BASE}/search-by-email'],
 }
 HUDSONROCK_PARAM_NAMES = {
-    'username': ('username', 'query', 'q', 'term'),
-    'email': ('email', 'query', 'q', 'term'),
+    'username': ('username',),
+    'email': ('email',),
 }
 HUDSONROCK_RESULT_KEYS = (
     'stealers', 'results', 'result', 'data', 'records', 'items', 'computers',
@@ -1232,10 +1244,9 @@ def format_hudsonrock_record(index, record):
 async def run_hudsonrock_query(kind, query):
     loop = asyncio.get_event_loop()
     endpoints = HUDSONROCK_ENDPOINTS.get(kind, [f'{HUDSONROCK_API_BASE}/search-by-{kind}'])
-    param_names = HUDSONROCK_PARAM_NAMES.get(kind, (kind, 'query', 'q'))
+    param_names = HUDSONROCK_PARAM_NAMES.get(kind, (kind,))
     last_status = None
     last_body = ''
-    saw_200 = False
 
     for endpoint in endpoints:
         for param_name in param_names:
@@ -1263,7 +1274,6 @@ async def run_hudsonrock_query(kind, query):
             if response.status_code != 200:
                 continue
 
-            saw_200 = True
             try:
                 data = response.json()
             except ValueError as exc:
@@ -1293,14 +1303,12 @@ async def run_hudsonrock_query(kind, query):
                 return '\n'.join(format_hudsonrock_record(idx, record) for idx, record in enumerate(records[:100], 1))
 
             logger.info(
-                '%s %s no parsed records body=%s',
+                '%s %s valid no-hit response body=%s',
                 HUDSONROCK_DISPLAY_NAME,
                 kind,
                 shorten(json.dumps(data, ensure_ascii=False, sort_keys=True), limit=700),
             )
-
-    if saw_200:
-        return 'No results found in HudsonRock Intel.'
+            return 'No results found in HudsonRock Intel.'
 
     if last_status is not None:
         return f'HudsonRock Intel API returned no usable response. Last status code: {last_status}. Body: {shorten(last_body, limit=300)}'
@@ -1333,6 +1341,7 @@ async def run_holehe(email):
 
 
 
+
 async def run_infostealer_email(email):
     return await run_hudsonrock_query('email', email)
 
@@ -1345,26 +1354,109 @@ async def run_cupid_phone(phone):
     return await run_subprocess([CUPID_PYTHON, CUPID_SCRIPT, '-p', phone], timeout=180, cwd=CUPID_DIR)
 
 
+
+DOMAIN_DNS_PROBE_HOSTS = [
+    '', 'www', 'mail', 'mx', 'smtp', 'imap', 'pop', 'ftp', 'vpn', 'portal',
+    'login', 'accounts', 'admin', 'api', 'dev', 'test', 'staging', 'cdn'
+]
+DOMAIN_WHOIS_KEYS = [
+    'domain_name', 'registrar', 'creation_date', 'expiration_date',
+    'updated_date', 'name_servers', 'emails', 'status'
+]
+
+
+def domain_list_value(value):
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        values = []
+        for item in value:
+            values.extend(domain_list_value(item))
+        return values
+    return [str(value)]
+
+
+def format_domain_values(values, max_items=8):
+    cleaned = []
+    seen = set()
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        marker = text.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        cleaned.append(text)
+    return ', '.join(cleaned[:max_items])
+
+
 async def run_whois(domain):
-    return await run_subprocess_with_fallback(
-        [
-            [WHOIS_PYTHON, '-m', 'whois', domain],
-            [WHOIS_CMD, domain],
-            [sys.executable, '-m', 'whois', domain]
-        ],
-        timeout=600
-    )
+    loop = asyncio.get_event_loop()
+
+    def _lookup():
+        try:
+            import whois
+        except Exception as exc:
+            return f'No WHOIS results for {domain}: python-whois unavailable ({type(exc).__name__}: {exc})'
+
+        try:
+            data = whois.whois(domain)
+        except Exception as exc:
+            return f'No WHOIS results for {domain}: lookup failed ({type(exc).__name__}: {exc})'
+
+        if not data:
+            return f'No WHOIS results for {domain}.'
+
+        lines = []
+        if hasattr(data, 'items'):
+            source = dict(data)
+        else:
+            source = getattr(data, '__dict__', {}) or {}
+
+        for key in DOMAIN_WHOIS_KEYS:
+            rendered = format_domain_values(domain_list_value(source.get(key)))
+            if rendered:
+                lines.append(f'{domain} WHOIS {key}: {rendered}')
+
+        if not lines:
+            return f'No WHOIS results for {domain}.'
+
+        return '\n'.join(lines)
+
+    return await loop.run_in_executor(None, _lookup)
 
 
-async def run_theharvester(domain):
-    return await run_subprocess_with_fallback(
-        [
-            [THEHARVESTER_PYTHON, '-m', 'theHarvester', '-d', domain, '-b', 'all'],
-            [THEHARVESTER_CMD, '-d', domain, '-b', 'all'],
-            [sys.executable, '-m', 'theHarvester', '-d', domain, '-b', 'all']
-        ],
-        timeout=600
-    )
+async def run_dns_probe(domain):
+    loop = asyncio.get_event_loop()
+
+    def _probe():
+        import socket
+
+        lines = []
+        seen = set()
+        for prefix in DOMAIN_DNS_PROBE_HOSTS:
+            hostname = domain if not prefix else f'{prefix}.{domain}'
+            try:
+                answers = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+            except OSError:
+                continue
+
+            ips = sorted({answer[4][0] for answer in answers if answer and answer[4]})
+            if not ips:
+                continue
+
+            key = (hostname.lower(), tuple(ips))
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f'{domain} DNS {hostname}: ' + ', '.join(ips[:8]))
+
+        if not lines:
+            return f'No DNS probe results for {domain}.'
+        return '\n'.join(lines[:50])
+
+    return await loop.run_in_executor(None, _probe)
 
 
 async def run_sublist3r(domain):
@@ -1380,6 +1472,7 @@ async def run_sublist3r(domain):
 
 
 # ---------------------------------------------------------------------------
+# Discord commands# ---------------------------------------------------------------------------
 # Discord commands
 # ---------------------------------------------------------------------------
 @client.event
@@ -1405,7 +1498,7 @@ async def help_command(interaction: discord.Interaction):
         '- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, HudsonRock Intel, user-scanner\n'
         '- **Email**: Blackbird, Holehe, COMB, HudsonRock Intel, user-scanner\n'
         '- **Phone**: cupidcr4wl\n'
-        '- **Domain**: whois, theHarvester, Sublist3r\n\n'
+        '- **Domain**: WHOIS, DNS Probe, Sublist3r\n\n'
         'Results are consolidated so identical findings from multiple tools are grouped with source attribution. '
         'Each `/osint` result now includes a Tool Status section showing which tools ran, failed, timed out, or returned no parsed findings.'
     )
@@ -1485,7 +1578,7 @@ async def osint(interaction: discord.Interaction, search_type: app_commands.Choi
     elif selected_type == 'phone':
         tools = [('cupidcr4wl', run_cupid_phone)]
     else:
-        tools = [('whois', run_whois), ('theHarvester', run_theharvester), ('Sublist3r', run_sublist3r)]
+        tools = [('WHOIS', run_whois), ('DNS Probe', run_dns_probe), ('Sublist3r', run_sublist3r)]
 
     await interaction.edit_original_response(content=f"🔎 Running **{selected_type.title()}** searches for `{query}` across {len(tools)} tools.")
 
