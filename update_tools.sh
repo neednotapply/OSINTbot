@@ -13,6 +13,7 @@ echo ""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOT_DIR="$SCRIPT_DIR"
 TOOLS_DIR="$SCRIPT_DIR/osint-tools"
+export PYTHONPATH="$BOT_DIR/tool_shims${PYTHONPATH:+:$PYTHONPATH}"
 
 # Stop the bot before updating
 echo "[0/13] Stopping Discord bot..."
@@ -46,7 +47,7 @@ source blackbirdvenv/bin/activate
 python -m pip install --upgrade -r requirements.txt
 python -m pip install --upgrade certifi
 deactivate
-"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/patch_blackbird.py"
+"$BOT_DIR/discordbotvenv/bin/python" -m osintbot_tool_shims --patch-blackbird "$BOT_DIR"
 echo "✅ blackbird updated"
 echo ""
 
@@ -110,13 +111,13 @@ deactivate
 echo "✅ Bot dependencies updated"
 echo ""
 
-echo "[11/13] Re-applying Blackbird patch..."
-"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/patch_blackbird.py"
-echo "✅ Blackbird patch applied"
+echo "[11/13] Re-applying Blackbird wrapper..."
+"$BOT_DIR/discordbotvenv/bin/python" -m osintbot_tool_shims --patch-blackbird "$BOT_DIR"
+echo "✅ Blackbird wrapper applied"
 echo ""
 
 echo "[12/13] Installing child-process SSL patch..."
-"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/install_tool_ssl_patch.py"
+"$BOT_DIR/discordbotvenv/bin/python" -m osintbot_tool_shims --install-ssl-patch "$BOT_DIR"
 echo "✅ SSL patch installed"
 echo ""
 
