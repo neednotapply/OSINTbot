@@ -139,7 +139,7 @@ The patch writes `sitecustomize.py` into each expected venv's `site-packages` di
 If Python crashes during `import discord` with:
 
 ```text
-ssl.SLError: [ASN1] nested asn1 error
+ssl.SSLError: [ASN1] nested asn1 error
 ```
 
 that usually means Python hit a malformed certificate while loading the Windows certificate store. `bot.py` patches Python SSL before importing `discord.py` / `aiohttp` and retries SSL context creation with the `certifi` CA bundle.
