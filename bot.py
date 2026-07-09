@@ -1133,6 +1133,7 @@ async def run_breaches(query):
 
 
 
+
 HUDSONROCK_DISPLAY_NAME = 'HudsonRock Intel'
 HUDSONROCK_API_BASE = 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools'
 HUDSONROCK_ENDPOINTS = {
@@ -1342,6 +1343,7 @@ async def run_holehe(email):
 
 
 
+
 async def run_infostealer_email(email):
     return await run_hudsonrock_query('email', email)
 
@@ -1352,6 +1354,7 @@ async def run_user_scanner_email(email):
 
 async def run_cupid_phone(phone):
     return await run_subprocess([CUPID_PYTHON, CUPID_SCRIPT, '-p', phone], timeout=180, cwd=CUPID_DIR)
+
 
 
 
@@ -1472,6 +1475,7 @@ async def run_sublist3r(domain):
 
 
 # ---------------------------------------------------------------------------
+# Discord commands# ---------------------------------------------------------------------------
 # Discord commands# ---------------------------------------------------------------------------
 # Discord commands
 # ---------------------------------------------------------------------------
