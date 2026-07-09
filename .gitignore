@@ -4,3 +4,4 @@ config.json
 osintbot.log
 config.json
 /__pycache__
+/tool_shims/__pycache__

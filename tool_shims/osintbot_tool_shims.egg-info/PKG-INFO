@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: osintbot-tool-shims
-Version: 0.3.0
+Version: 0.4.0
 Requires-Dist: requests>=2.32
 Requires-Dist: certifi>=2024.8.30
 Dynamic: requires-dist

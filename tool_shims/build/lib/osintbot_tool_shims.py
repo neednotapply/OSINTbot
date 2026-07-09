@@ -1,8 +1,8 @@
-"""Fallback command shims for OSINTbot-managed tool venvs.
+"""Fallback command shims and maintenance helpers for OSINTbot-managed venvs.
 
-These are intentionally small username/email checkers used when upstream Windows
-console entrypoints are brittle or mismatched. They emit formats that bot.py
-already knows how to parse.
+The console entrypoints provide small parser-friendly fallbacks for tools whose
+Windows wrappers are brittle. The module CLI also performs setup/update
+maintenance that used to live in separate root-level helper scripts.
 """
 
 from __future__ import annotations
@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hashlib
+import shutil
 import sys
 import urllib.parse
+from pathlib import Path
 
 import certifi
 import requests
@@ -44,6 +46,170 @@ USERNAME_SITES = [
 
 EMAIL_SITES = [
     ('Gravatar', 'https://www.gravatar.com/avatar/{md5}?d=404'),
+]
+
+BLACKBIRD_WRAPPER = '''"""OSINTbot wrapper around upstream Blackbird."""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import os
+import runpy
+import sys
+import traceback
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPSTREAM = os.path.join(BASE_DIR, 'blackbird_upstream.py')
+
+# Avoid update-check failures from causing empty/failed Discord results.
+if '--no-update' not in sys.argv:
+    sys.argv.append('--no-update')
+
+# Keep output deterministic for subprocess capture.
+os.environ.setdefault('PYTHONUTF8', '1')
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+os.environ.setdefault('TERM', 'dumb')
+os.environ.setdefault('NO_COLOR', '1')
+
+SPLASH_CHARS = set('▄█▓▒░▀▐▌▙▛▜▟▚▞')
+
+
+def _looks_like_splash(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if 'lucas antoniaci' in stripped.lower():
+        return True
+    splash_count = sum(1 for ch in stripped if ch in SPLASH_CHARS)
+    return splash_count >= max(3, len(stripped) // 6)
+
+
+def _filter_stdout(text: str) -> str:
+    clean_lines = []
+    saw_interesting = False
+    skipped_prefix = False
+
+    interesting_markers = (
+        'downloading site list',
+        'sites list is up to date',
+        'enumerating accounts',
+        'check completed',
+        '[+',
+        '[-',
+        '[!',
+        '✔',
+        '✅',
+        'http://',
+        'https://',
+    )
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+
+        if _looks_like_splash(line):
+            skipped_prefix = True
+            continue
+
+        if lowered.startswith('⏭') or 'skipping update' in lowered:
+            skipped_prefix = True
+            continue
+
+        if not saw_interesting:
+            if any(marker in lowered for marker in interesting_markers):
+                saw_interesting = True
+            elif skipped_prefix and not stripped:
+                continue
+            elif not stripped:
+                continue
+            else:
+                # Drop arbitrary preamble/splash text before Blackbird begins useful output.
+                skipped_prefix = True
+                continue
+
+        clean_lines.append(line)
+
+    return '\n'.join(clean_lines).strip()
+
+
+sys.argv[0] = UPSTREAM
+_buffer = io.StringIO()
+try:
+    with contextlib.redirect_stdout(_buffer):
+        runpy.run_path(UPSTREAM, run_name='__main__')
+except SystemExit as exc:
+    filtered = _filter_stdout(_buffer.getvalue())
+    if filtered:
+        print(filtered)
+    if exc.code not in (None, 0):
+        print(f'[OSINTbot] Blackbird exited with code {exc.code}; preserving stdout for parser.', file=sys.stderr)
+    raise SystemExit(0)
+except Exception as exc:
+    filtered = _filter_stdout(_buffer.getvalue())
+    if filtered:
+        print(filtered)
+    short_trace = ''.join(traceback.format_exception_only(type(exc), exc)).strip()
+    print(f'[OSINTbot] Blackbird suppressed upstream exception: {short_trace}', file=sys.stderr)
+    raise SystemExit(0)
+else:
+    filtered = _filter_stdout(_buffer.getvalue())
+    if filtered:
+        print(filtered)
+'''
+
+SSL_PATCH_CONTENT = r'''"""OSINTbot child-process SSL compatibility patch."""
+
+import os
+import ssl
+import sys
+
+_ORIGINAL_CREATE_DEFAULT_CONTEXT = ssl.create_default_context
+
+
+def _create_default_context_with_certifi_fallback(*args, **kwargs):
+    try:
+        return _ORIGINAL_CREATE_DEFAULT_CONTEXT(*args, **kwargs)
+    except ssl.SSLError as exc:
+        message = str(exc).lower()
+        if os.name != 'nt' or 'asn1' not in message:
+            raise
+
+        try:
+            import certifi
+        except Exception:
+            print(
+                '[OSINTbot] Windows certificate store failed to load and certifi '
+                'is not installed in this tool venv.',
+                file=sys.stderr,
+            )
+            raise
+
+        patched_kwargs = dict(kwargs)
+        if not any(patched_kwargs.get(key) for key in ('cafile', 'capath', 'cadata')):
+            patched_kwargs['cafile'] = certifi.where()
+
+        print(
+            '[OSINTbot] Warning: Windows certificate store failed to load; '
+            'using certifi CA bundle instead.',
+            file=sys.stderr,
+        )
+        return _ORIGINAL_CREATE_DEFAULT_CONTEXT(*args, **patched_kwargs)
+
+
+ssl.create_default_context = _create_default_context_with_certifi_fallback
+'''
+
+VENV_RELATIVE_PATHS = [
+    Path('discordbotvenv'),
+    Path('osint-tools/sherlock/sherlockvenv'),
+    Path('osint-tools/cupidcr4wl/cupidcr4wlvenv'),
+    Path('osint-tools/blackbird/blackbirdvenv'),
+    Path('osint-tools/holehe/holehevenv'),
+    Path('osint-tools/user-scanner/userscannervenv'),
+    Path('osint-tools/whois/whoisvenv'),
+    Path('osint-tools/theHarvester/theharvestervenv'),
+    Path('osint-tools/sublist3r/sublist3rvenv'),
 ]
 
 
@@ -182,6 +348,103 @@ def holehe_main() -> int:
     return 0
 
 
+def patch_blackbird(base_dir: Path) -> int:
+    blackbird_dir = base_dir / 'osint-tools' / 'blackbird'
+    blackbird_main = blackbird_dir / 'blackbird.py'
+    blackbird_upstream = blackbird_dir / 'blackbird_upstream.py'
+
+    if not blackbird_main.exists():
+        print(f'[SKIP] blackbird.py not found at {blackbird_main}')
+        return 0
+
+    current = blackbird_main.read_text(encoding='utf-8', errors='replace')
+    if 'OSINTbot wrapper around upstream Blackbird' not in current:
+        if blackbird_upstream.exists():
+            blackbird_upstream.unlink()
+        shutil.copy2(blackbird_main, blackbird_upstream)
+
+    blackbird_main.write_text(BLACKBIRD_WRAPPER, encoding='utf-8')
+    print('[OK] Blackbird wrapper installed/refreshed.')
+    return 0
+
+
+def site_packages_dirs(venv_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+
+    windows_site = venv_dir / 'Lib' / 'site-packages'
+    if windows_site.exists():
+        candidates.append(windows_site)
+
+    unix_lib = venv_dir / 'lib'
+    if unix_lib.exists():
+        candidates.extend(sorted(unix_lib.glob('python*/site-packages')))
+
+    return candidates
+
+
+def install_ssl_patch(base_dir: Path) -> int:
+    print('Installing OSINTbot SSL patch into tool virtualenvs...')
+    failures = 0
+
+    for rel_path in VENV_RELATIVE_PATHS:
+        venv_dir = base_dir / rel_path
+        if not venv_dir.exists():
+            print(f'[SKIP] missing venv: {venv_dir}')
+            failures += 1
+            continue
+
+        targets = site_packages_dirs(venv_dir)
+        if not targets:
+            print(f'[SKIP] no site-packages found: {venv_dir}')
+            failures += 1
+            continue
+
+        for site_dir in targets:
+            patch_path = site_dir / 'sitecustomize.py'
+            patch_path.write_text(SSL_PATCH_CONTENT, encoding='utf-8')
+
+        print(f'[OK] patched {venv_dir}')
+
+    if failures:
+        print(f'Completed with {failures} skipped venv(s). Run setup first for missing tools.')
+    else:
+        print('SSL patch installed into all expected venvs.')
+
+    return 0
+
+
+def maintenance_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description='OSINTbot tool shim maintenance helpers')
+    parser.add_argument('--patch-blackbird', action='store_true')
+    parser.add_argument('--install-ssl-patch', action='store_true')
+    parser.add_argument('base_dir', nargs='?', default='.')
+    args = parser.parse_args(argv)
+
+    base_dir = Path(args.base_dir).resolve()
+    exit_code = 0
+
+    if args.patch_blackbird:
+        exit_code = max(exit_code, patch_blackbird(base_dir))
+
+    if args.install_ssl_patch:
+        exit_code = max(exit_code, install_ssl_patch(base_dir))
+
+    if not args.patch_blackbird and not args.install_ssl_patch:
+        parser.print_help()
+        return 2
+
+    return exit_code
+
+
+def main() -> int:
+    maintenance_flags = {'--patch-blackbird', '--install-ssl-patch'}
+    if any(arg in maintenance_flags for arg in sys.argv[1:]):
+        return maintenance_main(sys.argv[1:])
+
+    # Running this module directly without maintenance flags defaults to the
+    # user-scanner style interface for quick local testing.
+    return user_scanner_main()
+
+
 if __name__ == '__main__':
-    # Running this module directly defaults to the user-scanner style interface.
-    raise SystemExit(user_scanner_main())
+    raise SystemExit(main())
