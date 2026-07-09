@@ -17,8 +17,8 @@ HUDSONROCK_ENDPOINTS = {
     'email': [f'{HUDSONROCK_API_BASE}/search-by-email'],
 }
 HUDSONROCK_PARAM_NAMES = {
-    'username': ('username', 'query', 'q', 'term'),
-    'email': ('email', 'query', 'q', 'term'),
+    'username': ('username',),
+    'email': ('email',),
 }
 HUDSONROCK_RESULT_KEYS = (
     'stealers', 'results', 'result', 'data', 'records', 'items', 'computers',
@@ -121,10 +121,9 @@ def format_hudsonrock_record(index, record):
 async def run_hudsonrock_query(kind, query):
     loop = asyncio.get_event_loop()
     endpoints = HUDSONROCK_ENDPOINTS.get(kind, [f'{HUDSONROCK_API_BASE}/search-by-{kind}'])
-    param_names = HUDSONROCK_PARAM_NAMES.get(kind, (kind, 'query', 'q'))
+    param_names = HUDSONROCK_PARAM_NAMES.get(kind, (kind,))
     last_status = None
     last_body = ''
-    saw_200 = False
 
     for endpoint in endpoints:
         for param_name in param_names:
@@ -152,7 +151,6 @@ async def run_hudsonrock_query(kind, query):
             if response.status_code != 200:
                 continue
 
-            saw_200 = True
             try:
                 data = response.json()
             except ValueError as exc:
@@ -182,14 +180,12 @@ async def run_hudsonrock_query(kind, query):
                 return '\n'.join(format_hudsonrock_record(idx, record) for idx, record in enumerate(records[:100], 1))
 
             logger.info(
-                '%s %s no parsed records body=%s',
+                '%s %s valid no-hit response body=%s',
                 HUDSONROCK_DISPLAY_NAME,
                 kind,
                 shorten(json.dumps(data, ensure_ascii=False, sort_keys=True), limit=700),
             )
-
-    if saw_200:
-        return 'No results found in HudsonRock Intel.'
+            return 'No results found in HudsonRock Intel.'
 
     if last_status is not None:
         return f'HudsonRock Intel API returned no usable response. Last status code: {last_status}. Body: {shorten(last_body, limit=300)}'
@@ -207,6 +203,125 @@ async def run_infostealer_username(username):
 HUDSONROCK_EMAIL_FUNCTION = r'''
 async def run_infostealer_email(email):
     return await run_hudsonrock_query('email', email)
+
+
+'''
+
+DOMAIN_HELPERS = r'''
+DOMAIN_DNS_PROBE_HOSTS = [
+    '', 'www', 'mail', 'mx', 'smtp', 'imap', 'pop', 'ftp', 'vpn', 'portal',
+    'login', 'accounts', 'admin', 'api', 'dev', 'test', 'staging', 'cdn'
+]
+DOMAIN_WHOIS_KEYS = [
+    'domain_name', 'registrar', 'creation_date', 'expiration_date',
+    'updated_date', 'name_servers', 'emails', 'status'
+]
+
+
+def domain_list_value(value):
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        values = []
+        for item in value:
+            values.extend(domain_list_value(item))
+        return values
+    return [str(value)]
+
+
+def format_domain_values(values, max_items=8):
+    cleaned = []
+    seen = set()
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        marker = text.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        cleaned.append(text)
+    return ', '.join(cleaned[:max_items])
+
+
+async def run_whois(domain):
+    loop = asyncio.get_event_loop()
+
+    def _lookup():
+        try:
+            import whois
+        except Exception as exc:
+            return f'No WHOIS results for {domain}: python-whois unavailable ({type(exc).__name__}: {exc})'
+
+        try:
+            data = whois.whois(domain)
+        except Exception as exc:
+            return f'No WHOIS results for {domain}: lookup failed ({type(exc).__name__}: {exc})'
+
+        if not data:
+            return f'No WHOIS results for {domain}.'
+
+        lines = []
+        if hasattr(data, 'items'):
+            source = dict(data)
+        else:
+            source = getattr(data, '__dict__', {}) or {}
+
+        for key in DOMAIN_WHOIS_KEYS:
+            rendered = format_domain_values(domain_list_value(source.get(key)))
+            if rendered:
+                lines.append(f'{domain} WHOIS {key}: {rendered}')
+
+        if not lines:
+            return f'No WHOIS results for {domain}.'
+
+        return '\n'.join(lines)
+
+    return await loop.run_in_executor(None, _lookup)
+
+
+async def run_dns_probe(domain):
+    loop = asyncio.get_event_loop()
+
+    def _probe():
+        import socket
+
+        lines = []
+        seen = set()
+        for prefix in DOMAIN_DNS_PROBE_HOSTS:
+            hostname = domain if not prefix else f'{prefix}.{domain}'
+            try:
+                answers = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+            except OSError:
+                continue
+
+            ips = sorted({answer[4][0] for answer in answers if answer and answer[4]})
+            if not ips:
+                continue
+
+            key = (hostname.lower(), tuple(ips))
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f'{domain} DNS {hostname}: ' + ', '.join(ips[:8]))
+
+        if not lines:
+            return f'No DNS probe results for {domain}.'
+        return '\n'.join(lines[:50])
+
+    return await loop.run_in_executor(None, _probe)
+
+
+async def run_sublist3r(domain):
+    return await run_subprocess_with_fallback(
+        [
+            [SUBLIST3R_PYTHON, '-m', 'sublist3r', '-d', domain],
+            [SUBLIST3R_CMD, '-d', domain],
+            [sys.executable, '-m', 'sublist3r', '-d', domain]
+        ],
+        timeout=600,
+        combine_streams=True
+    )
 
 
 '''
@@ -309,6 +424,72 @@ def patch_hudsonrock_parser(text: str) -> tuple[str, bool]:
     return text, changed
 
 
+def patch_parser_failure_handling(text: str) -> tuple[str, bool]:
+    changed = False
+
+    old = """def classify_tool_run(output, findings_count):\n    if output_looks_like_tool_failure(output):\n        return 'error', summarize_subprocess_failure(output)\n\n    if findings_count > 0:\n        return 'ok', f'{findings_count} parsed finding(s)'\n"""
+    new = """def classify_tool_run(output, findings_count):\n    if findings_count > 0:\n        return 'ok', f'{findings_count} parsed finding(s)'\n\n    if output_looks_like_tool_failure(output):\n        return 'error', summarize_subprocess_failure(output)\n"""
+    if old in text:
+        text = text.replace(old, new, 1)
+        changed = True
+
+    old_extract = """def extract_findings(output, query, search_type, tool_name=None):\n    if not output:\n        return []\n\n    findings = []\n"""
+    new_extract = """def extract_findings(output, query, search_type, tool_name=None):\n    if not output:\n        return []\n\n    if output_looks_like_tool_failure(output):\n        logger.info(\n            'Skipping finding parsing because tool output looks like failure tool=%s search_type=%s query=%s',\n            tool_name,\n            search_type,\n            query,\n        )\n        return []\n\n    findings = []\n"""
+    if old_extract in text:
+        text = text.replace(old_extract, new_extract, 1)
+        changed = True
+
+    ignored_old = """        'module', 'warning', 'error', 'version:', 'github :', 'for btc donations',\n        'found 10000 result(s):'\n"""
+    ignored_new = """        'module', 'warning', 'error', 'version:', 'github :', 'for btc donations',\n        'found 10000 result(s):', 'lookup failed', 'unable to', 'not installed',\n        'no whois results', 'no dns probe results'\n"""
+    if ignored_old in text:
+        text = text.replace(ignored_old, ignored_new, 1)
+        changed = True
+
+    return text, changed
+
+
+def strip_existing_domain_runners(text: str) -> str:
+    marker = 'DOMAIN_DNS_PROBE_HOSTS ='
+    function_marker = 'async def run_whois(domain):'
+    if marker not in text:
+        return text
+    start = text.find(marker)
+    end = text.find(function_marker, start)
+    if end == -1:
+        return text
+    return text[:start] + text[end:]
+
+
+def patch_domain_runners(text: str) -> tuple[str, bool]:
+    changed = False
+
+    stripped = strip_existing_domain_runners(text)
+    if stripped != text:
+        text = stripped
+        changed = True
+
+    text, replaced_domain_runners = replace_between(
+        text,
+        'async def run_whois(domain):',
+        '# ---------------------------------------------------------------------------\n# Discord commands',
+        DOMAIN_HELPERS + '# ---------------------------------------------------------------------------\n# Discord commands',
+    )
+    changed = changed or replaced_domain_runners
+
+    old_tools = """        tools = [('whois', run_whois), ('theHarvester', run_theharvester), ('Sublist3r', run_sublist3r)]"""
+    new_tools = """        tools = [('WHOIS', run_whois), ('DNS Probe', run_dns_probe), ('Sublist3r', run_sublist3r)]"""
+    if old_tools in text:
+        text = text.replace(old_tools, new_tools, 1)
+        changed = True
+
+    text = text.replace('- **Domain**: whois, theHarvester, Sublist3r', '- **Domain**: WHOIS, DNS Probe, Sublist3r')
+    text = text.replace("'name': 'whois'", "'name': 'WHOIS'")
+    text = text.replace("'name': 'theHarvester'", "'name': 'DNS Probe'")
+    text = text.replace("'repair': 'setup.bat step [7/9] or setup.sh theHarvester section'", "'repair': 'built in; run update_tools.bat to refresh bot dependencies'")
+
+    return text, changed
+
+
 def patch_bot(base_dir: Path) -> int:
     bot_path = base_dir / 'bot.py'
     if not bot_path.exists():
@@ -321,6 +502,8 @@ def patch_bot(base_dir: Path) -> int:
     text, changed_cupid = patch_cupid_author_false_positive(text)
     text, changed_hudsonrock_parser = patch_hudsonrock_parser(text)
     text, changed_hudsonrock_label = patch_hudsonrock_label(text)
+    text, changed_parser = patch_parser_failure_handling(text)
+    text, changed_domain = patch_domain_runners(text)
 
     if text == original:
         print('[OK] bot.py already has maintenance patches.')
@@ -334,6 +517,10 @@ def patch_bot(base_dir: Path) -> int:
         changes.append('HudsonRock Intel tolerant parser')
     if changed_hudsonrock_label:
         changes.append('HudsonRock Intel label rename')
+    if changed_parser:
+        changes.append('failure-output parser guard')
+    if changed_domain:
+        changes.append('domain runners')
     print('[OK] bot.py patched: ' + ', '.join(changes))
     return 0
 
