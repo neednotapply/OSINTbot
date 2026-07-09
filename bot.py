@@ -789,6 +789,15 @@ def render_finding_for_tool(item, tool_name):
     return base
 
 
+
+def is_tool_author_url(url):
+    clean = cleanup_url(url).lower().rstrip('/')
+    return clean in {
+        'https://github.com/osinti4l',
+        'http://github.com/osinti4l',
+    }
+
+
 def parse_cupid_finding(raw_clean):
     # Main cupidcr4wl format:
     # ↳ Account found on Site: https://example.com/user
@@ -812,6 +821,8 @@ def parse_cupid_finding(raw_clean):
     # Account found: URL / Possible account: URL / plain URL format.
     url = extract_first_url(raw_clean)
     if url:
+        if is_tool_author_url(url):
+            return None
         # Prefer a label from the URL host over returning a bare URL.
         return format_url_finding(url)
 
@@ -1108,46 +1119,139 @@ async def run_breaches(query):
     return 'No breaches found in COMB database.'
 
 
-async def run_infostealer_username(username):
+
+INFOSTEALER_API_BASE = 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools'
+INFOSTEALER_RESULT_KEYS = (
+    'stealers', 'results', 'result', 'data', 'records', 'items', 'computers',
+    'compromised_machines', 'infected_machines', 'rows'
+)
+INFOSTEALER_RECORD_KEYS = {
+    'computer_name', 'os', 'operating_system', 'ip', 'country', 'city',
+    'date_compromised', 'date', 'timestamp', 'email', 'username', 'domain',
+    'url', 'credential', 'credentials', 'passwords', 'logins', 'services'
+}
+INFOSTEALER_SUMMARY_KEYS = [
+    'computer_name', 'os', 'operating_system', 'ip', 'country', 'city',
+    'date_compromised', 'date', 'timestamp', 'domain', 'url', 'email', 'username'
+]
+
+
+def looks_like_infostealer_record(value):
+    if not isinstance(value, dict):
+        return False
+    keys = {str(key).lower() for key in value.keys()}
+    return bool(keys & INFOSTEALER_RECORD_KEYS)
+
+
+def iter_infostealer_records(value, depth=0):
+    if depth > 4:
+        return
+
+    if isinstance(value, list):
+        for item in value:
+            yield from iter_infostealer_records(item, depth + 1)
+        return
+
+    if not isinstance(value, dict):
+        return
+
+    if looks_like_infostealer_record(value):
+        yield value
+
+    for key in INFOSTEALER_RESULT_KEYS:
+        nested = value.get(key)
+        if nested is not None:
+            yield from iter_infostealer_records(nested, depth + 1)
+
+
+def infostealer_shape_summary(data):
+    if isinstance(data, dict):
+        keys = ','.join(sorted(str(key) for key in data.keys())[:20])
+        return f'dict keys=[{keys}]'
+    if isinstance(data, list):
+        return f'list len={len(data)}'
+    return type(data).__name__
+
+
+def credential_service_names(record):
+    service_names = []
+    credentials = record.get('credentials') or record.get('logins') or record.get('passwords') or record.get('services')
+    if not isinstance(credentials, list):
+        return service_names
+
+    for item in credentials[:10]:
+        if not isinstance(item, dict):
+            continue
+        candidate = item.get('url') or item.get('domain') or item.get('service') or item.get('site')
+        if candidate:
+            service_names.append(str(candidate))
+
+    return service_names
+
+
+def format_infostealer_record(index, record):
+    pieces = [f'Record {index}']
+
+    for key in INFOSTEALER_SUMMARY_KEYS:
+        value = record.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            pieces.append(f'{key}={value}')
+
+    services = credential_service_names(record)
+    if services:
+        deduped_services = []
+        seen = set()
+        for service in services:
+            marker = service.lower()
+            if marker not in seen:
+                seen.add(marker)
+                deduped_services.append(service)
+        pieces.append('services=' + ', '.join(deduped_services[:5]))
+
+    if len(pieces) == 1:
+        compact = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        pieces.append('raw=' + shorten(compact, limit=240))
+
+    return ' | '.join(pieces)
+
+
+async def run_infostealer_query(kind, param_name, query):
     loop = asyncio.get_event_loop()
+    endpoint = f'{INFOSTEALER_API_BASE}/search-by-{kind}'
 
     def _request():
-        return session.get(
-            'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-username',
-            params={'username': username},
-            timeout=20
-        )
+        return session.get(endpoint, params={param_name: query}, timeout=20)
 
     response = await loop.run_in_executor(None, _request)
-    logger.info('InfoStealer username response status=%s query=%s', response.status_code, username)
+    logger.info('InfoStealer %s response status=%s query=%s', kind, response.status_code, query)
     if response.status_code != 200:
         return f"API returned status code: {response.status_code}"
 
-    data = response.json()
-    if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
-        lines = []
-        important_keys = ['computer_name', 'os', 'operating_system', 'ip', 'country', 'city', 'date_compromised']
-        username_l = username.lower()
+    try:
+        data = response.json()
+    except ValueError as exc:
+        logger.warning('InfoStealer %s JSON parse failed query=%s error=%s body=%s', kind, query, exc, shorten(response.text, limit=500))
+        return 'Unable to parse InfoStealer API response as JSON.'
 
-        for idx, stealer in enumerate(data['stealers'][:100], 1):
-            if not isinstance(stealer, dict):
-                continue
+    records = list(iter_infostealer_records(data))
+    logger.info(
+        'InfoStealer %s response shape=%s records=%s query=%s',
+        kind,
+        infostealer_shape_summary(data),
+        len(records),
+        query,
+    )
 
-            blob = json.dumps(stealer, ensure_ascii=False).lower()
-            if username_l not in blob:
-                continue
+    if records:
+        return '\n'.join(format_infostealer_record(idx, record) for idx, record in enumerate(records[:100], 1))
 
-            pieces = [f'Record {idx}']
-            for key in important_keys:
-                value = stealer.get(key)
-                if isinstance(value, (str, int, float)) and str(value).strip():
-                    pieces.append(f'{key}={value}')
-
-            lines.append(' | '.join(pieces))
-
-        if lines:
-            return '\n'.join(lines)
     return 'No results found in infostealer databases.'
+
+
+
+
+async def run_infostealer_username(username):
+    return await run_infostealer_query('username', 'username', username)
 
 
 async def run_user_scanner_username(username):
@@ -1167,46 +1271,10 @@ async def run_holehe(email):
     return await run_subprocess([HOLEHE_PATH, email], timeout=180)
 
 
+
+
 async def run_infostealer_email(email):
-    loop = asyncio.get_event_loop()
-
-    def _request():
-        return session.get(
-            'https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email',
-            params={'email': email},
-            timeout=20
-        )
-
-    response = await loop.run_in_executor(None, _request)
-    logger.info('InfoStealer email response status=%s query=%s', response.status_code, email)
-    if response.status_code != 200:
-        return f"API returned status code: {response.status_code}"
-
-    data = response.json()
-    if 'stealers' in data and isinstance(data['stealers'], list) and len(data['stealers']) > 0:
-        lines = []
-        important_keys = ['computer_name', 'os', 'operating_system', 'ip', 'country', 'city', 'date_compromised']
-        email_l = email.lower()
-
-        for idx, stealer in enumerate(data['stealers'][:100], 1):
-            if not isinstance(stealer, dict):
-                continue
-
-            blob = json.dumps(stealer, ensure_ascii=False)
-            if not line_contains_exact_email(blob, email_l):
-                continue
-
-            pieces = [f'Record {idx}']
-            for key in important_keys:
-                value = stealer.get(key)
-                if isinstance(value, (str, int, float)) and str(value).strip():
-                    pieces.append(f'{key}={value}')
-
-            lines.append(' | '.join(pieces))
-
-        if lines:
-            return '\n'.join(lines)
-    return 'No results found in infostealer databases.'
+    return await run_infostealer_query('email', 'email', email)
 
 
 async def run_user_scanner_email(email):
