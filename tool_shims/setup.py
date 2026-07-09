@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='osintbot-tool-shims',
-    version='0.4.0',
+    version='0.4.1',
     py_modules=['osintbot_tool_shims'],
     install_requires=[
         'requests>=2.32',
