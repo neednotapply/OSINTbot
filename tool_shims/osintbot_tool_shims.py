@@ -48,7 +48,10 @@ EMAIL_SITES = [
     ('Gravatar', 'https://www.gravatar.com/avatar/{md5}?d=404'),
 ]
 
-BLACKBIRD_WRAPPER = '''"""OSINTbot wrapper around upstream Blackbird."""
+# Raw string is intentional: this content is written verbatim into
+# osint-tools/blackbird/blackbird.py. In particular, keep '\n' escaped so the
+# generated wrapper contains return '\n'.join(...), not an unterminated literal.
+BLACKBIRD_WRAPPER = r'''"""OSINTbot wrapper around upstream Blackbird."""
 
 from __future__ import annotations
 
