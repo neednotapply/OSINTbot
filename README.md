@@ -21,8 +21,8 @@ Every `/osint` result includes a **Tool Status** section showing which tools ran
 
 ## Sources
 
-- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, InfoStealer, user-scanner
-- **Email**: Blackbird, Holehe, COMB, InfoStealer, user-scanner
+- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, HudsonRock Intel, user-scanner
+- **Email**: Blackbird, Holehe, COMB, HudsonRock Intel, user-scanner
 - **Phone**: cupidcr4wl
 - **Domain**: whois, theHarvester, Sublist3r
 
