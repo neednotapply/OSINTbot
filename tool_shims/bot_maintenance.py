@@ -445,6 +445,12 @@ def patch_parser_failure_handling(text: str) -> tuple[str, bool]:
         text = text.replace(ignored_old, ignored_new, 1)
         changed = True
 
+    failure_token_old = """        'module not found',\n        'modulenotfounderror',\n"""
+    failure_token_new = """        'module not found',\n        'no module named',\n        'modulenotfounderror',\n"""
+    if failure_token_old in text and failure_token_new not in text:
+        text = text.replace(failure_token_old, failure_token_new, 1)
+        changed = True
+
     return text, changed
 
 
