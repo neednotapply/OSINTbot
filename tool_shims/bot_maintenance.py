@@ -9,52 +9,65 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-INFOSTEALER_HELPERS = r'''
-INFOSTEALER_API_BASE = 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools'
-INFOSTEALER_RESULT_KEYS = (
+HUDSONROCK_HELPERS = r'''
+HUDSONROCK_DISPLAY_NAME = 'HudsonRock Intel'
+HUDSONROCK_API_BASE = 'https://cavalier.hudsonrock.com/api/json/v2/osint-tools'
+HUDSONROCK_ENDPOINTS = {
+    'username': [f'{HUDSONROCK_API_BASE}/search-by-username'],
+    'email': [f'{HUDSONROCK_API_BASE}/search-by-email'],
+}
+HUDSONROCK_PARAM_NAMES = {
+    'username': ('username', 'query', 'q', 'term'),
+    'email': ('email', 'query', 'q', 'term'),
+}
+HUDSONROCK_RESULT_KEYS = (
     'stealers', 'results', 'result', 'data', 'records', 'items', 'computers',
     'compromised_machines', 'infected_machines', 'rows'
 )
-INFOSTEALER_RECORD_KEYS = {
+HUDSONROCK_RECORD_KEYS = {
     'computer_name', 'os', 'operating_system', 'ip', 'country', 'city',
     'date_compromised', 'date', 'timestamp', 'email', 'username', 'domain',
     'url', 'credential', 'credentials', 'passwords', 'logins', 'services'
 }
-INFOSTEALER_SUMMARY_KEYS = [
+HUDSONROCK_SUMMARY_KEYS = [
     'computer_name', 'os', 'operating_system', 'ip', 'country', 'city',
     'date_compromised', 'date', 'timestamp', 'domain', 'url', 'email', 'username'
 ]
+HUDSONROCK_HEADERS = {
+    'User-Agent': 'OSINTbot/1.0 (+https://github.com/neednotapply/OSINTbot)',
+    'Accept': 'application/json,text/plain,*/*',
+}
 
 
-def looks_like_infostealer_record(value):
+def looks_like_hudsonrock_record(value):
     if not isinstance(value, dict):
         return False
     keys = {str(key).lower() for key in value.keys()}
-    return bool(keys & INFOSTEALER_RECORD_KEYS)
+    return bool(keys & HUDSONROCK_RECORD_KEYS)
 
 
-def iter_infostealer_records(value, depth=0):
-    if depth > 4:
+def iter_hudsonrock_records(value, depth=0):
+    if depth > 5:
         return
 
     if isinstance(value, list):
         for item in value:
-            yield from iter_infostealer_records(item, depth + 1)
+            yield from iter_hudsonrock_records(item, depth + 1)
         return
 
     if not isinstance(value, dict):
         return
 
-    if looks_like_infostealer_record(value):
+    if looks_like_hudsonrock_record(value):
         yield value
 
-    for key in INFOSTEALER_RESULT_KEYS:
+    for key in HUDSONROCK_RESULT_KEYS:
         nested = value.get(key)
         if nested is not None:
-            yield from iter_infostealer_records(nested, depth + 1)
+            yield from iter_hudsonrock_records(nested, depth + 1)
 
 
-def infostealer_shape_summary(data):
+def hudsonrock_shape_summary(data):
     if isinstance(data, dict):
         keys = ','.join(sorted(str(key) for key in data.keys())[:20])
         return f'dict keys=[{keys}]'
@@ -63,7 +76,7 @@ def infostealer_shape_summary(data):
     return type(data).__name__
 
 
-def credential_service_names(record):
+def hudsonrock_credential_service_names(record):
     service_names = []
     credentials = record.get('credentials') or record.get('logins') or record.get('passwords') or record.get('services')
     if not isinstance(credentials, list):
@@ -79,15 +92,15 @@ def credential_service_names(record):
     return service_names
 
 
-def format_infostealer_record(index, record):
+def format_hudsonrock_record(index, record):
     pieces = [f'Record {index}']
 
-    for key in INFOSTEALER_SUMMARY_KEYS:
+    for key in HUDSONROCK_SUMMARY_KEYS:
         value = record.get(key)
         if isinstance(value, (str, int, float)) and str(value).strip():
             pieces.append(f'{key}={value}')
 
-    services = credential_service_names(record)
+    services = hudsonrock_credential_service_names(record)
     if services:
         deduped_services = []
         seen = set()
@@ -105,49 +118,95 @@ def format_infostealer_record(index, record):
     return ' | '.join(pieces)
 
 
-async def run_infostealer_query(kind, param_name, query):
+async def run_hudsonrock_query(kind, query):
     loop = asyncio.get_event_loop()
-    endpoint = f'{INFOSTEALER_API_BASE}/search-by-{kind}'
+    endpoints = HUDSONROCK_ENDPOINTS.get(kind, [f'{HUDSONROCK_API_BASE}/search-by-{kind}'])
+    param_names = HUDSONROCK_PARAM_NAMES.get(kind, (kind, 'query', 'q'))
+    last_status = None
+    last_body = ''
+    saw_200 = False
 
-    def _request():
-        return session.get(endpoint, params={param_name: query}, timeout=20)
+    for endpoint in endpoints:
+        for param_name in param_names:
+            def _request(endpoint=endpoint, param_name=param_name):
+                return session.get(
+                    endpoint,
+                    params={param_name: query},
+                    headers=HUDSONROCK_HEADERS,
+                    timeout=20,
+                )
 
-    response = await loop.run_in_executor(None, _request)
-    logger.info('InfoStealer %s response status=%s query=%s', kind, response.status_code, query)
-    if response.status_code != 200:
-        return f"API returned status code: {response.status_code}"
+            response = await loop.run_in_executor(None, _request)
+            last_status = response.status_code
+            last_body = response.text or ''
+            logger.info(
+                '%s %s response status=%s endpoint=%s param=%s query=%s',
+                HUDSONROCK_DISPLAY_NAME,
+                kind,
+                response.status_code,
+                endpoint,
+                param_name,
+                query,
+            )
 
-    try:
-        data = response.json()
-    except ValueError as exc:
-        logger.warning('InfoStealer %s JSON parse failed query=%s error=%s body=%s', kind, query, exc, shorten(response.text, limit=500))
-        return 'Unable to parse InfoStealer API response as JSON.'
+            if response.status_code != 200:
+                continue
 
-    records = list(iter_infostealer_records(data))
-    logger.info(
-        'InfoStealer %s response shape=%s records=%s query=%s',
-        kind,
-        infostealer_shape_summary(data),
-        len(records),
-        query,
-    )
+            saw_200 = True
+            try:
+                data = response.json()
+            except ValueError as exc:
+                logger.warning(
+                    '%s %s JSON parse failed query=%s error=%s body=%s',
+                    HUDSONROCK_DISPLAY_NAME,
+                    kind,
+                    query,
+                    exc,
+                    shorten(response.text, limit=500),
+                )
+                continue
 
-    if records:
-        return '\n'.join(format_infostealer_record(idx, record) for idx, record in enumerate(records[:100], 1))
+            records = list(iter_hudsonrock_records(data))
+            logger.info(
+                '%s %s response shape=%s records=%s endpoint=%s param=%s query=%s',
+                HUDSONROCK_DISPLAY_NAME,
+                kind,
+                hudsonrock_shape_summary(data),
+                len(records),
+                endpoint,
+                param_name,
+                query,
+            )
 
-    return 'No results found in infostealer databases.'
+            if records:
+                return '\n'.join(format_hudsonrock_record(idx, record) for idx, record in enumerate(records[:100], 1))
+
+            logger.info(
+                '%s %s no parsed records body=%s',
+                HUDSONROCK_DISPLAY_NAME,
+                kind,
+                shorten(json.dumps(data, ensure_ascii=False, sort_keys=True), limit=700),
+            )
+
+    if saw_200:
+        return 'No results found in HudsonRock Intel.'
+
+    if last_status is not None:
+        return f'HudsonRock Intel API returned no usable response. Last status code: {last_status}. Body: {shorten(last_body, limit=300)}'
+
+    return 'HudsonRock Intel API returned no response.'
 '''
 
-INFOSTEALER_USERNAME_FUNCTION = r'''
+HUDSONROCK_USERNAME_FUNCTION = r'''
 async def run_infostealer_username(username):
-    return await run_infostealer_query('username', 'username', username)
+    return await run_hudsonrock_query('username', username)
 
 
 '''
 
-INFOSTEALER_EMAIL_FUNCTION = r'''
+HUDSONROCK_EMAIL_FUNCTION = r'''
 async def run_infostealer_email(email):
-    return await run_infostealer_query('email', 'email', email)
+    return await run_hudsonrock_query('email', email)
 
 
 '''
@@ -192,20 +251,50 @@ def is_tool_author_url(url):
     return text, changed
 
 
-def patch_infostealer(text: str) -> tuple[str, bool]:
+def patch_hudsonrock_label(text: str) -> tuple[str, bool]:
+    updated = text.replace('InfoStealer', 'HudsonRock Intel')
+    updated = updated.replace('infostealer databases', 'HudsonRock Intel')
+    return updated, updated != text
+
+
+def strip_existing_hudsonrock_helpers(text: str) -> str:
+    helper_markers = [
+        'INFOSTEALER_API_BASE =',
+        'HUDSONROCK_API_BASE =',
+        'HUDSONROCK_DISPLAY_NAME =',
+    ]
+    function_marker = 'async def run_infostealer_username(username):'
+
+    starts = [text.find(marker) for marker in helper_markers if text.find(marker) != -1]
+    if not starts:
+        return text
+
+    start = min(starts)
+    end = text.find(function_marker, start)
+    if end == -1:
+        return text
+
+    return text[:start] + text[end:]
+
+
+def patch_hudsonrock_parser(text: str) -> tuple[str, bool]:
     changed = False
 
-    if 'INFOSTEALER_API_BASE' not in text:
-        marker = 'async def run_infostealer_username(username):'
-        if marker in text:
-            text = text.replace(marker, INFOSTEALER_HELPERS + '\n\n' + marker, 1)
-            changed = True
+    stripped = strip_existing_hudsonrock_helpers(text)
+    if stripped != text:
+        text = stripped
+        changed = True
+
+    marker = 'async def run_infostealer_username(username):'
+    if marker in text:
+        text = text.replace(marker, HUDSONROCK_HELPERS + '\n\n' + marker, 1)
+        changed = True
 
     text, replaced_username = replace_between(
         text,
         'async def run_infostealer_username(username):',
         'async def run_user_scanner_username(username):',
-        INFOSTEALER_USERNAME_FUNCTION,
+        HUDSONROCK_USERNAME_FUNCTION,
     )
     changed = changed or replaced_username
 
@@ -213,7 +302,7 @@ def patch_infostealer(text: str) -> tuple[str, bool]:
         text,
         'async def run_infostealer_email(email):',
         'async def run_user_scanner_email(email):',
-        INFOSTEALER_EMAIL_FUNCTION,
+        HUDSONROCK_EMAIL_FUNCTION,
     )
     changed = changed or replaced_email
 
@@ -230,7 +319,8 @@ def patch_bot(base_dir: Path) -> int:
     text = original
 
     text, changed_cupid = patch_cupid_author_false_positive(text)
-    text, changed_infostealer = patch_infostealer(text)
+    text, changed_hudsonrock_parser = patch_hudsonrock_parser(text)
+    text, changed_hudsonrock_label = patch_hudsonrock_label(text)
 
     if text == original:
         print('[OK] bot.py already has maintenance patches.')
@@ -240,8 +330,10 @@ def patch_bot(base_dir: Path) -> int:
     changes = []
     if changed_cupid:
         changes.append('cupidcr4wl author-url filter')
-    if changed_infostealer:
-        changes.append('InfoStealer tolerant parser')
+    if changed_hudsonrock_parser:
+        changes.append('HudsonRock Intel tolerant parser')
+    if changed_hudsonrock_label:
+        changes.append('HudsonRock Intel label rename')
     print('[OK] bot.py patched: ' + ', '.join(changes))
     return 0
 
