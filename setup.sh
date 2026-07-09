@@ -14,6 +14,7 @@ echo ""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOT_DIR="$SCRIPT_DIR"
 TOOLS_DIR="$SCRIPT_DIR/osint-tools"
+export PYTHONPATH="$BOT_DIR/tool_shims${PYTHONPATH:+:$PYTHONPATH}"
 
 if command -v apt >/dev/null 2>&1; then
   echo "[1/9] Updating package metadata..."
@@ -132,11 +133,11 @@ chmod +x "$BOT_DIR/run_bot.sh" || true
 
 echo ""
 echo "[6/9] Installing Blackbird wrapper..."
-"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/patch_blackbird.py"
+"$BOT_DIR/discordbotvenv/bin/python" -m osintbot_tool_shims --patch-blackbird "$BOT_DIR"
 
 echo ""
 echo "[7/9] Installing child-process SSL patch..."
-"$BOT_DIR/discordbotvenv/bin/python" "$BOT_DIR/install_tool_ssl_patch.py"
+"$BOT_DIR/discordbotvenv/bin/python" -m osintbot_tool_shims --install-ssl-patch "$BOT_DIR"
 
 echo ""
 echo "[8/9] Verifying tool shim entrypoints..."
