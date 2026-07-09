@@ -15,7 +15,7 @@ if defined PYTHONPATH (
   set "PYTHONPATH=%BOT_DIR%\tool_shims"
 )
 
-echo [1/12] Updating Sherlock...
+echo [1/13] Updating Sherlock...
 cd /d "%TOOLS_DIR%\sherlock" || goto :err
 call sherlockvenv\Scripts\activate.bat
 python -m pip install --upgrade sherlock-project certifi
@@ -23,7 +23,7 @@ python -m pip install --force-reinstall "%BOT_DIR%\tool_shims"
 call deactivate
 
 echo.
-echo [2/12] Updating cupidcr4wl...
+echo [2/13] Updating cupidcr4wl...
 cd /d "%TOOLS_DIR%\cupidcr4wl" || goto :err
 call git pull
 call cupidcr4wlvenv\Scripts\activate.bat
@@ -32,7 +32,7 @@ python -m pip install --upgrade certifi
 call deactivate
 
 echo.
-echo [3/12] Updating blackbird...
+echo [3/13] Updating blackbird...
 cd /d "%TOOLS_DIR%\blackbird" || goto :err
 git reset --hard
 call git pull
@@ -43,7 +43,7 @@ call deactivate
 "%BOT_DIR%\discordbotvenv\Scripts\python.exe" -m osintbot_tool_shims --patch-blackbird "%BOT_DIR%"
 
 echo.
-echo [4/12] Updating holehe...
+echo [4/13] Updating holehe...
 cd /d "%TOOLS_DIR%\holehe" || goto :err
 call holehevenv\Scripts\activate.bat
 python -m pip install --upgrade holehe certifi
@@ -51,7 +51,7 @@ python -m pip install --force-reinstall "%BOT_DIR%\tool_shims"
 call deactivate
 
 echo.
-echo [5/12] Updating user-scanner...
+echo [5/13] Updating user-scanner...
 cd /d "%TOOLS_DIR%\user-scanner" || goto :err
 call userscannervenv\Scripts\activate.bat
 python -m pip install --upgrade user-scanner certifi
@@ -59,45 +59,49 @@ python -m pip install --force-reinstall "%BOT_DIR%\tool_shims"
 call deactivate
 
 echo.
-echo [6/12] Updating whois...
+echo [6/13] Updating whois...
 cd /d "%TOOLS_DIR%\whois" || goto :err
 call whoisvenv\Scripts\activate.bat
 python -m pip install --upgrade python-whois certifi
 call deactivate
 
 echo.
-echo [7/12] Updating theHarvester...
+echo [7/13] Updating theHarvester...
 cd /d "%TOOLS_DIR%\theHarvester" || goto :err
 call theharvestervenv\Scripts\activate.bat
 python -m pip install --upgrade theHarvester certifi
 call deactivate
 
 echo.
-echo [8/12] Updating Sublist3r...
+echo [8/13] Updating Sublist3r...
 cd /d "%TOOLS_DIR%\sublist3r" || goto :err
 call sublist3rvenv\Scripts\activate.bat
 python -m pip install --upgrade sublist3r certifi
 call deactivate
 
 echo.
-echo [9/12] Updating bot dependencies...
+echo [9/13] Updating bot dependencies...
 cd /d "%BOT_DIR%" || goto :err
 call discordbotvenv\Scripts\activate.bat
 python -m pip install --upgrade -r requirements.txt
 call deactivate
 
 echo.
-echo [10/12] Installing child-process SSL patch...
+echo [10/13] Applying bot parser maintenance patches...
+"%BOT_DIR%\discordbotvenv\Scripts\python.exe" "%BOT_DIR%\tool_shims\bot_maintenance.py" "%BOT_DIR%"
+
+echo.
+echo [11/13] Installing child-process SSL patch...
 "%BOT_DIR%\discordbotvenv\Scripts\python.exe" -m osintbot_tool_shims --install-ssl-patch "%BOT_DIR%"
 
 echo.
-echo [11/12] Verifying tool shim entrypoints...
+echo [12/13] Verifying tool shim entrypoints...
 "%TOOLS_DIR%\sherlock\sherlockvenv\Scripts\sherlock.exe" test --timeout 3 >nul 2>nul
 "%TOOLS_DIR%\holehe\holehevenv\Scripts\holehe.exe" test@example.com --timeout 3 >nul 2>nul
 "%TOOLS_DIR%\user-scanner\userscannervenv\Scripts\user-scanner.exe" -u test --timeout 3 >nul 2>nul
 
 echo.
-echo [12/12] Done.
+echo [13/13] Done.
 
 echo.
 echo ================================================
