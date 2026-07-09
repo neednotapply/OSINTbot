@@ -9,6 +9,11 @@ echo.
 for %%I in ("%~dp0.") do set "BASE=%%~fI"
 set "BOT_DIR=%BASE%"
 set "TOOLS_DIR=%BASE%\osint-tools"
+if defined PYTHONPATH (
+  set "PYTHONPATH=%BOT_DIR%\tool_shims;%PYTHONPATH%"
+) else (
+  set "PYTHONPATH=%BOT_DIR%\tool_shims"
+)
 
 echo [1/12] Updating Sherlock...
 cd /d "%TOOLS_DIR%\sherlock" || goto :err
@@ -35,7 +40,7 @@ call blackbirdvenv\Scripts\activate.bat
 python -m pip install --upgrade -r requirements.txt
 python -m pip install --upgrade certifi
 call deactivate
-"%BOT_DIR%\discordbotvenv\Scripts\python.exe" "%BOT_DIR%\patch_blackbird.py"
+"%BOT_DIR%\discordbotvenv\Scripts\python.exe" -m osintbot_tool_shims --patch-blackbird "%BOT_DIR%"
 
 echo.
 echo [4/12] Updating holehe...
@@ -83,7 +88,7 @@ call deactivate
 
 echo.
 echo [10/12] Installing child-process SSL patch...
-"%BOT_DIR%\discordbotvenv\Scripts\python.exe" "%BOT_DIR%\install_tool_ssl_patch.py"
+"%BOT_DIR%\discordbotvenv\Scripts\python.exe" -m osintbot_tool_shims --install-ssl-patch "%BOT_DIR%"
 
 echo.
 echo [11/12] Verifying tool shim entrypoints...
