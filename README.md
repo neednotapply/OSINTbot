@@ -103,9 +103,9 @@ The command reports expected paths under `osint-tools`, missing executables/scri
 
 ### Parser-friendly fallback shims
 
-`setup.bat` and `update_tools.bat` install a small local package from `tool_shims/` into the Sherlock and user-scanner venvs. This replaces brittle Windows entrypoints with parser-friendly commands that emit output formats `bot.py` already understands.
+`setup.bat`, `update_tools.bat`, `setup.sh`, and `update_tools.sh` install a small local package from `tool_shims/` into the Sherlock, Holehe, and user-scanner venvs. This replaces brittle Windows entrypoints with parser-friendly commands that emit output formats `bot.py` already understands.
 
-Blackbird is patched by `patch_blackbird.py`. The wrapper preserves upstream Blackbird but adds `--no-update` and exits cleanly so parseable stdout is not discarded when Blackbird's update check fails.
+Blackbird is patched by the setup/update scripts via `python -m osintbot_tool_shims --patch-blackbird`. The wrapper preserves upstream Blackbird as `blackbird_upstream.py`, adds `--no-update`, filters splash/banner noise, and exits cleanly so parseable stdout is not discarded when Blackbird's update check fails.
 
 ### Windows child-process SSL repair
 
@@ -121,10 +121,10 @@ run:
 update_tools.bat
 ```
 
-That installs/updates `certifi` in each tool venv and runs:
+That installs/updates `certifi` in each tool venv and runs the consolidated maintenance helper:
 
 ```bat
-discordbotvenv\Scripts\python.exe install_tool_ssl_patch.py
+discordbotvenv\Scripts\python.exe -m osintbot_tool_shims --install-ssl-patch "%CD%"
 ```
 
 The patch writes `sitecustomize.py` into each expected venv's `site-packages` directory so child tools like Blackbird get the same certificate fallback that `bot.py` uses.
@@ -139,7 +139,7 @@ The patch writes `sitecustomize.py` into each expected venv's `site-packages` di
 If Python crashes during `import discord` with:
 
 ```text
-ssl.SSLError: [ASN1] nested asn1 error
+ssl.SLError: [ASN1] nested asn1 error
 ```
 
 that usually means Python hit a malformed certificate while loading the Windows certificate store. `bot.py` patches Python SSL before importing `discord.py` / `aiohttp` and retries SSL context creation with the `certifi` CA bundle.
@@ -183,8 +183,8 @@ update_tools.bat
 - **Slash commands not visible**: re-invite bot with `applications.commands` scope, then restart the bot so slash commands sync.
 - **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
 - **Only some sources appear**: check the **Tool Status** section in `/osint` output, then run `/osint-status`.
-- **Sherlock/user-scanner return code 1 with empty output**: run `update_tools.bat` to reinstall the parser-friendly shims.
+- **Sherlock/Holehe/user-scanner return code 1 with empty output**: run `update_tools.bat` to reinstall the parser-friendly shims.
 - **Blackbird exits 1 after printing a banner/update error**: run `update_tools.bat` to reinstall the Blackbird wrapper.
-- **Child tool SSL crash**: run `update_tools.bat` so `install_tool_ssl_patch.py` patches every tool venv.
+- **Child tool SSL crash**: run `update_tools.bat` so the consolidated maintenance helper patches every tool venv.
 - **Tool errors/timeouts**: check your bot logs and re-run update scripts.
 - **Windows import-time SSL crash**: pull the latest repo changes, run `discordbotvenv\Scripts\python.exe -m pip install -r requirements.txt`, then use `run_bot.bat` instead of `py bot.py`.
