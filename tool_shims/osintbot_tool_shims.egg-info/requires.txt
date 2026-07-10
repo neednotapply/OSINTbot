@@ -1,2 +1,0 @@
-requests>=2.32
-certifi>=2024.8.30

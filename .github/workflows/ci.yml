@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e .[dev]
+      - run: python -m pytest
+      - run: python -m ruff check osintbot tests
+      - run: python -m mypy osintbot/config.py osintbot/models.py osintbot/orchestration.py osintbot/process.py osintbot/maintenance.py
+      - run: python -m build
+      - name: Reject tracked generated files and secrets
+        shell: bash
+        run: |
+          test -z "$(git ls-files | grep -E '(__pycache__|\.pyc$|\.egg-info/|^build/|^dist/)' || true)"
+          ! git grep -E 'BOT_TOKEN["'"']?[[:space:]]*[:=][[:space:]]*["'"'][A-Za-z0-9._-]{30,}' -- ':!example.config.json'

@@ -1,4 +1,4 @@
-discord.py>=2.4,<3
-requests>=2.32
-certifi>=2024.8.30
-python-whois>=0.9.4
+discord.py==2.6.4
+requests==2.32.5
+certifi==2026.2.25
+python-whois==0.9.6

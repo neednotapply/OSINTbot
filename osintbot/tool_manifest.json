@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "tools": [
+    {"name": "sherlock", "kind": "pypi", "package": "sherlock-project==0.16.0", "venv": "sherlockvenv", "executable": "sherlock", "platforms": ["windows", "linux"]},
+    {"name": "cupidcr4wl", "kind": "git", "url": "https://github.com/OSINTI4L/cupidcr4wl.git", "revision": "d9b43898b629d5878c00adae413b7258e15061dc", "venv": "cupidcr4wlvenv", "executable": "cc.py", "platforms": ["windows", "linux"]},
+    {"name": "blackbird", "kind": "git", "url": "https://github.com/p1ngul1n0/blackbird.git", "revision": "b45505080ef51bb3ef52dc29879ee6bef31e5b94", "venv": "blackbirdvenv", "executable": "blackbird.py", "platforms": ["windows", "linux"]},
+    {"name": "holehe", "kind": "pypi", "package": "holehe==1.61", "venv": "holehevenv", "executable": "holehe", "platforms": ["windows", "linux"]},
+    {"name": "user-scanner", "kind": "pypi", "package": "user-scanner==1.4.1.4", "venv": "userscannervenv", "executable": "user-scanner", "platforms": ["windows", "linux"]},
+    {"name": "whois", "kind": "pypi", "package": "python-whois==0.9.6", "venv": "whoisvenv", "executable": "python", "platforms": ["windows", "linux"]},
+    {"name": "sublist3r", "kind": "pypi", "package": "Sublist3r==1.0", "venv": "sublist3rvenv", "executable": "sublist3r", "platforms": ["windows", "linux"]}
+  ]
+}

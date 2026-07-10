@@ -211,7 +211,6 @@ VENV_RELATIVE_PATHS = [
     Path('osint-tools/holehe/holehevenv'),
     Path('osint-tools/user-scanner/userscannervenv'),
     Path('osint-tools/whois/whoisvenv'),
-    Path('osint-tools/theHarvester/theharvestervenv'),
     Path('osint-tools/sublist3r/sublist3rvenv'),
 ]
 

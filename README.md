@@ -1,190 +1,116 @@
 # OSINT Discord Bot
 
-A Discord bot that runs OSINT searches with a single slash command and consolidated results.  
-Original bot created by [OSINTI4L](https://github.com/OSINTI4L) (not hosted on GitHub). This repository contains my modified version.
+OSINTbot runs several locally installed OSINT sources from one Discord slash
+command, consolidates duplicate findings, and reports the status of every source.
+Windows and Linux are first-class platforms; macOS is best effort.
 
-## Commands
+The available commands are:
 
-- `/osint` — run a search
-- `/osint-status` — check local OSINT tool paths and setup status
-- `/help` — show search options and coverage
+- `/osint` — search by Username, Email, Phone, or Domain.
+- `/osint-status` — diagnose installed sources, optionally by category.
+- `/help` — show supported categories and sources.
 
-`/osint` prompts for:
-- `Search type`: `Username`, `Email`, `Phone`, `Domain`
-- `Query`: the value to search
-
-`/osint-status` can check all configured tools or filter by category. Use it when a source is not appearing in results.
-
-Results are consolidated: if the same finding appears in multiple tools, it is grouped once with all matching sources listed.
-Where possible, URL-style findings are sent as clickable Discord hyperlinks.
-Every `/osint` result includes a **Tool Status** section showing which tools ran, failed, timed out, or returned no parsed findings.
+Results are visible in the channel where the command is invoked. Anyone with
+Discord permission to invoke the command can use it.
 
 ## Sources
 
-- **Username**: Sherlock, Blackbird, cupidcr4wl, COMB, HudsonRock Intel, user-scanner
-- **Email**: Blackbird, Holehe, COMB, HudsonRock Intel, user-scanner
-- **Phone**: cupidcr4wl
-- **Domain**: WHOIS, DNS Probe, Sublist3r
+- Username: Sherlock, Blackbird, cupidcr4wl, COMB, HudsonRock Intel, user-scanner
+- Email: Blackbird, Holehe, COMB, HudsonRock Intel, user-scanner
+- Phone: cupidcr4wl
+- Domain: WHOIS, DNS Probe, Sublist3r
 
-## Quick Start
+## Installation
 
-### 1) Create your Discord bot
-Use the official Discord docs for bot setup, intents, and OAuth scopes:
-- https://discord.com/developers/docs/quick-start/getting-started
-- https://discordpy.readthedocs.io/en/stable/discord.html
+Python 3.11 or newer and Git are required. The setup launchers create the bot
+environment and install known-good tool versions from
+`osintbot/tool_manifest.json`.
 
-Make sure your bot has slash command support (`applications.commands`) and can send messages in channels where it will be used.
+Windows:
 
-### 2) Install dependencies
-
-#### Linux
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-#### Windows
 ```bat
 setup.bat
 ```
 
-### 3) Configure the bot
-Edit `config.json`:
-```json
-{
-  "BOT_TOKEN": "YOUR_BOT_TOKEN_HERE"
-}
+Linux:
+
+```sh
+chmod +x setup.sh run_bot.sh update_tools.sh
+./setup.sh
 ```
 
-### 4) Run the bot
+Setup and updates are idempotent. Git-based tool checkouts are pinned to exact
+commits, and maintenance refuses to overwrite a dirty checkout. It never resets
+application source.
 
-#### Linux/macOS/Unix-like shells
-```bash
-cd /path/to/OSINTbot
-chmod +x run_bot.sh
-./run_bot.sh
-```
+## Configuration
 
-Or run the venv interpreter directly:
-```bash
-discordbotvenv/bin/python bot.py
-```
+Set the token through the environment whenever possible:
 
-#### Windows
 ```bat
-cd /d C:\path\to\OSINTbot
+set OSINTBOT_TOKEN=your-token
 run_bot.bat
 ```
 
-Or run the venv interpreter directly:
-```bat
-discordbotvenv\Scripts\python.exe bot.py
+```sh
+OSINTBOT_TOKEN=your-token ./run_bot.sh
 ```
 
-Do not use bare `py bot.py` or bare `python bot.py` unless you intentionally want to use the global Python environment instead of the repo virtual environment.
+An ignored `config.json` based on `example.config.json` remains supported for
+backward compatibility. Environment values take precedence.
 
-## Diagnostics
+| Variable | Default | Purpose |
+| --- | ---: | --- |
+| `OSINTBOT_TOKEN` | required | Discord bot token |
+| `OSINTBOT_TOOLS_DIR` | `./osint-tools` | Local tool installations |
+| `OSINTBOT_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR, or CRITICAL |
+| `OSINTBOT_LOG_PATH` | `./osintbot.log` | Rotating log location |
+| `OSINTBOT_MAX_CONCURRENCY` | `3` | Simultaneous source runners |
+| `OSINTBOT_SEARCH_DEADLINE` | `600` | Overall search deadline in seconds |
+| `OSINTBOT_DEBUG_DATA_LOGGING` | `false` | Include raw queries and shortened output at DEBUG |
 
-Run this in Discord after the bot starts:
+At INFO, logs contain request IDs, user IDs, categories, durations, statuses,
+and counts—not raw queries or findings. Enabling both DEBUG log level and debug
+data logging writes sensitive search data to disk. Protect and rotate those logs.
 
-```text
-/osint-status
+## Running and diagnostics
+
+Use `run_bot.bat` or `./run_bot.sh`. `bot.py` remains a compatibility launcher;
+the canonical entry point is:
+
+```sh
+python -m osintbot
 ```
 
-Useful filters:
+Maintenance commands are shared across platforms:
 
-```text
-/osint-status search_type:Username
-/osint-status search_type:Email
-/osint-status search_type:Domain
+```sh
+python -m osintbot.maintenance install
+python -m osintbot.maintenance update
+python -m osintbot.maintenance doctor
+python -m osintbot.maintenance verify
 ```
 
-The command reports expected paths under `osint-tools`, missing executables/scripts, and which setup step should repair each missing local tool.
+On Linux, `python -m osintbot.maintenance service` prints a systemd unit for
+explicit administrator review and installation. Setup does not install or start
+a service automatically.
 
-### Parser-friendly fallback shims
+## Development
 
-`setup.bat`, `update_tools.bat`, `setup.sh`, and `update_tools.sh` install a small local package from `tool_shims/` into the Sherlock, Holehe, and user-scanner venvs. This replaces brittle Windows entrypoints with parser-friendly commands that emit output formats `bot.py` already understands.
-
-Blackbird is patched by the setup/update scripts via `python -m osintbot_tool_shims --patch-blackbird`. The wrapper preserves upstream Blackbird as `blackbird_upstream.py`, adds `--no-update`, filters splash/banner noise, and exits cleanly so parseable stdout is not discarded when Blackbird's update check fails.
-
-### Windows child-process SSL repair
-
-If a child OSINT tool fails with:
-
-```text
-ssl.SSLError: [ASN1] nested asn1 error
+```sh
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check osintbot tests
+python -m mypy osintbot/config.py osintbot/models.py osintbot/orchestration.py osintbot/process.py osintbot/maintenance.py
 ```
 
-run:
+CI runs these checks and a package build on Python 3.11 and 3.12 for Windows and
+Linux. See `docs/ARCHITECTURE.md` for adding adapters and
+`docs/MAINTENANCE.md` for the release/update checklist.
 
-```bat
-update_tools.bat
-```
+## Upstream and responsible use
 
-That installs/updates `certifi` in each tool venv and runs the consolidated maintenance helper:
-
-```bat
-discordbotvenv\Scripts\python.exe -m osintbot_tool_shims --install-ssl-patch "%CD%"
-```
-
-The patch writes `sitecustomize.py` into each expected venv's `site-packages` directory so child tools like Blackbird get the same certificate fallback that `bot.py` uses.
-
-## Launchers
-
-- `run_bot.sh` is the Unix launcher for Linux/macOS-style shells. It uses `discordbotvenv/bin/python bot.py` when available, then falls back to `python3` or `python`.
-- `run_bot.bat` is the Windows launcher. It uses `discordbotvenv\Scripts\python.exe bot.py` when available, then falls back to `py`.
-
-## Windows SSL note
-
-If Python crashes during `import discord` with:
-
-```text
-ssl.SSLError: [ASN1] nested asn1 error
-```
-
-that usually means Python hit a malformed certificate while loading the Windows certificate store. `bot.py` patches Python SSL before importing `discord.py` / `aiohttp` and retries SSL context creation with the `certifi` CA bundle.
-
-The workaround is not a substitute for eventually cleaning the bad certificate from Windows, but it should get the bot running.
-
-## Logging
-
-The bot writes detailed execution logs to both stdout and `osintbot.log` (rotated at ~2MB with 3 backups).
-
-- Set `OSINTBOT_LOG_LEVEL` to control verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`).
-- Default level is `INFO`.
-- Use `DEBUG` when diagnosing silent failures, parser misses, or tool subprocess issues.
-
-Windows example:
-```bat
-set OSINTBOT_LOG_LEVEL=DEBUG
-run_bot.bat
-```
-
-Linux/macOS example:
-```bash
-OSINTBOT_LOG_LEVEL=DEBUG ./run_bot.sh
-```
-
-## Updating
-
-#### Linux
-```bash
-chmod +x update_tools.sh
-./update_tools.sh
-```
-
-#### Windows
-```bat
-update_tools.bat
-```
-
-## Troubleshooting
-
-- **Slash commands not visible**: re-invite bot with `applications.commands` scope, then restart the bot so slash commands sync.
-- **No bot response in server channels**: verify channel permissions (View Channel, Send Messages).
-- **Only some sources appear**: check the **Tool Status** section in `/osint` output, then run `/osint-status`.
-- **Sherlock/Holehe/user-scanner return code 1 with empty output**: run `update_tools.bat` to reinstall the parser-friendly shims.
-- **Blackbird exits 1 after printing a banner/update error**: run `update_tools.bat` to reinstall the Blackbird wrapper.
-- **Child tool SSL crash**: run `update_tools.bat` so the consolidated maintenance helper patches every tool venv.
-- **Tool errors/timeouts**: check your bot logs and re-run update scripts.
-- **Windows import-time SSL crash**: pull the latest repo changes, run `discordbotvenv\Scripts\python.exe -m pip install -r requirements.txt`, then use `run_bot.bat` instead of `py bot.py`.
+The original bot was created by [OSINTI4L](https://github.com/OSINTI4L); this
+repository contains a modified version. Use OSINTbot only where you have lawful
+authority, follow source terms, and remember that channel-visible results and
+DEBUG logs can contain personal information.
