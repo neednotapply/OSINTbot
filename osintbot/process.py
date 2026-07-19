@@ -47,7 +47,7 @@ def run_process(
     started = time.monotonic()
     popen_kwargs: dict[str, object] = {"start_new_session": os.name != "nt"}
     if os.name == "nt":
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     try:
         process = subprocess.Popen(  # type: ignore[call-overload]
             list(command),
