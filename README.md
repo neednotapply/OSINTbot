@@ -1,7 +1,8 @@
 # OSINT Discord Bot
 
 OSINTbot runs several locally installed OSINT sources from one Discord slash
-command, consolidates duplicate findings, and reports the status of every source.
+command, consolidates duplicate findings, and highlights actionable source
+problems.
 Windows and Linux are first-class platforms; macOS is best effort.
 
 The available commands are:
@@ -20,32 +21,41 @@ Discord permission to invoke the command can use it.
 - Phone: cupidcr4wl
 - Domain: WHOIS, DNS Probe, Sublist3r
 
-## Installation
+## Install, configure, and run
 
-Python 3.11 or newer and Git are required. The setup launchers create the bot
-environment and install known-good tool versions from
-`osintbot/tool_manifest.json`.
+Python 3.11 or newer and Git are required. Clone the repository, then run one
+setup command. It creates an isolated environment and installs the pinned
+tools from `osintbot/tool_manifest.json`.
 
-Windows:
+Windows (Command Prompt):
 
 ```bat
+git clone https://github.com/neednotapply/OSINTbot.git
+cd OSINTbot
 setup.bat
+copy example.config.json config.json
+notepad config.json
+run_bot.bat
 ```
 
 Linux:
 
 ```sh
+git clone https://github.com/neednotapply/OSINTbot.git
+cd OSINTbot
 chmod +x setup.sh run_bot.sh update_tools.sh
 ./setup.sh
+cp example.config.json config.json
+${EDITOR:-nano} config.json
+./run_bot.sh
 ```
 
-Setup and updates are idempotent. Git-based tool checkouts are pinned to exact
-commits, and maintenance refuses to overwrite a dirty checkout. It never resets
-application source.
+Set `BOT_TOKEN` in `config.json` before running. The file is ignored by Git.
 
 ## Configuration
 
-Set the token through the environment whenever possible:
+For deployments, set the token through the environment instead of storing it
+in `config.json`:
 
 ```bat
 set OSINTBOT_TOKEN=your-token
@@ -56,8 +66,7 @@ run_bot.bat
 OSINTBOT_TOKEN=your-token ./run_bot.sh
 ```
 
-An ignored `config.json` based on `example.config.json` remains supported for
-backward compatibility. Environment values take precedence.
+Environment values take precedence over `config.json`.
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
@@ -73,16 +82,23 @@ At INFO, logs contain request IDs, user IDs, categories, durations, statuses,
 and counts—not raw queries or findings. Enabling both DEBUG log level and debug
 data logging writes sensitive search data to disk. Protect and rotate those logs.
 
-## Running and diagnostics
+## Updates and diagnostics
 
-Use `run_bot.bat` or `./run_bot.sh`. `bot.py` remains a compatibility launcher;
-the canonical entry point is:
+Run updates with `update_tools.bat` on Windows or `./update_tools.sh` on Linux.
+Both setup and updates are idempotent. Git-based tool checkouts are pinned to
+exact commits, and updates refuse to overwrite a dirty tool checkout. They
+never reset application source.
 
-```sh
-python -m osintbot
+The launchers above are recommended. `bot.py` remains a compatibility launcher;
+the module entry point is `python -m osintbot` when using the setup virtual
+environment:
+
+```text
+Windows: discordbotvenv\Scripts\python.exe -m osintbot
+Linux:   discordbotvenv/bin/python -m osintbot
 ```
 
-Maintenance commands are shared across platforms:
+Maintenance commands use the same virtual-environment Python:
 
 ```sh
 python -m osintbot.maintenance install

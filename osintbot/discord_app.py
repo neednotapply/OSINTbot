@@ -1581,7 +1581,7 @@ async def help_command(interaction: discord.Interaction):
         '- **Phone**: cupidcr4wl\n'
         '- **Domain**: WHOIS, DNS Probe, Sublist3r\n\n'
         'Results are consolidated so identical findings from multiple tools are grouped with source attribution. '
-        'Each `/osint` result now includes a Tool Status section showing which tools ran, failed, timed out, or returned no parsed findings.'
+        'Each `/osint` result includes a Tool Issues section when a source warns, fails, or times out.'
     )
 
 

@@ -203,15 +203,14 @@ def _create_default_context_with_certifi_fallback(*args, **kwargs):
 ssl.create_default_context = _create_default_context_with_certifi_fallback
 '''
 
-VENV_RELATIVE_PATHS = [
-    Path('discordbotvenv'),
-    Path('osint-tools/sherlock/sherlockvenv'),
-    Path('osint-tools/cupidcr4wl/cupidcr4wlvenv'),
-    Path('osint-tools/blackbird/blackbirdvenv'),
-    Path('osint-tools/holehe/holehevenv'),
-    Path('osint-tools/user-scanner/userscannervenv'),
-    Path('osint-tools/whois/whoisvenv'),
-    Path('osint-tools/sublist3r/sublist3rvenv'),
+TOOL_VENV_RELATIVE_PATHS = [
+    Path('sherlock/sherlockvenv'),
+    Path('cupidcr4wl/cupidcr4wlvenv'),
+    Path('blackbird/blackbirdvenv'),
+    Path('holehe/holehevenv'),
+    Path('user-scanner/userscannervenv'),
+    Path('whois/whoisvenv'),
+    Path('sublist3r/sublist3rvenv'),
 ]
 
 
@@ -350,8 +349,8 @@ def holehe_main() -> int:
     return 0
 
 
-def patch_blackbird(base_dir: Path) -> int:
-    blackbird_dir = base_dir / 'osint-tools' / 'blackbird'
+def patch_blackbird(tools_dir: Path) -> int:
+    blackbird_dir = tools_dir / 'blackbird'
     blackbird_main = blackbird_dir / 'blackbird.py'
     blackbird_upstream = blackbird_dir / 'blackbird_upstream.py'
 
@@ -384,12 +383,12 @@ def site_packages_dirs(venv_dir: Path) -> list[Path]:
     return candidates
 
 
-def install_ssl_patch(base_dir: Path) -> int:
+def install_ssl_patch(tools_dir: Path) -> int:
     print('Installing OSINTbot SSL patch into tool virtualenvs...')
     failures = 0
 
-    for rel_path in VENV_RELATIVE_PATHS:
-        venv_dir = base_dir / rel_path
+    for rel_path in TOOL_VENV_RELATIVE_PATHS:
+        venv_dir = tools_dir / rel_path
         if not venv_dir.exists():
             print(f'[SKIP] missing venv: {venv_dir}')
             failures += 1
@@ -422,14 +421,14 @@ def maintenance_main(argv: list[str]) -> int:
     parser.add_argument('base_dir', nargs='?', default='.')
     args = parser.parse_args(argv)
 
-    base_dir = Path(args.base_dir).resolve()
+    tools_dir = (Path(args.base_dir).resolve() / 'osint-tools')
     exit_code = 0
 
     if args.patch_blackbird:
-        exit_code = max(exit_code, patch_blackbird(base_dir))
+        exit_code = max(exit_code, patch_blackbird(tools_dir))
 
     if args.install_ssl_patch:
-        exit_code = max(exit_code, install_ssl_patch(base_dir))
+        exit_code = max(exit_code, install_ssl_patch(tools_dir))
 
     if not args.patch_blackbird and not args.install_ssl_patch:
         parser.print_help()

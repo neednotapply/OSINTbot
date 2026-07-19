@@ -68,7 +68,7 @@ def install_tool(tool: dict[str, object], tools_dir: Path, update: bool = False)
         _run([python, "-m", "pip", "install", "--force-reinstall", str(BASE_DIR / "tool_shims")])
 
 
-def apply_compatibility_repairs() -> None:
+def apply_compatibility_repairs(tools_dir: Path) -> None:
     """Apply maintained upstream wrappers without modifying application source."""
     source = BASE_DIR / "tool_shims" / "osintbot_tool_shims.py"
     spec = importlib.util.spec_from_file_location("osintbot_tool_shims", source)
@@ -76,8 +76,8 @@ def apply_compatibility_repairs() -> None:
         raise RuntimeError(f"Unable to load compatibility helpers from {source}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.patch_blackbird(BASE_DIR)
-    module.install_ssl_patch(BASE_DIR)
+    module.patch_blackbird(tools_dir)
+    module.install_ssl_patch(tools_dir)
 
 
 def doctor(tools_dir: Path) -> int:
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         tools_dir.mkdir(parents=True, exist_ok=True)
         for tool in load_manifest():
             install_tool(tool, tools_dir, update=args.command == "update")
-        apply_compatibility_repairs()
+        apply_compatibility_repairs(tools_dir)
         return verify(tools_dir)
     if args.command == "doctor":
         return doctor(tools_dir)
