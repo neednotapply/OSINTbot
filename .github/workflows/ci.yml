@@ -26,4 +26,4 @@ jobs:
         shell: bash
         run: |
           test -z "$(git ls-files | grep -E '(__pycache__|\.pyc$|\.egg-info/|^build/|^dist/)' || true)"
-          ! git grep -E 'BOT_TOKEN["'"']?[[:space:]]*[:=][[:space:]]*["'"'][A-Za-z0-9._-]{30,}' -- ':!example.config.json'
+          ! git grep -E "BOT_TOKEN[\"']?[[:space:]]*[:=][[:space:]]*[\"'][A-Za-z0-9._-]{30,}" -- ':!example.config.json'
